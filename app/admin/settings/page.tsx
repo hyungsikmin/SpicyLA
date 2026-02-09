@@ -8,13 +8,19 @@ import {
   type SiteSettings,
   type Tier,
 } from '@/lib/siteSettings'
+import { fetchLunchSettings, getOrCreateTodayRound } from '@/lib/lunch'
 import { Button } from '@/components/ui/button'
+
+const LUNCH_DEFAULTS = { deadline_hour: 12, timezone: 'America/Los_Angeles' }
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<SiteSettings | null>(null)
+  const [lunchSettings, setLunchSettings] = useState<{ deadline_hour: number; timezone: string }>(LUNCH_DEFAULTS)
   const [tiers, setTiers] = useState<Tier[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState<'settings' | 'tier' | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [todayLunchRoundClosed, setTodayLunchRoundClosed] = useState(false)
+  const [saving, setSaving] = useState<'settings' | 'tier' | 'lunch' | null>(null)
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
 
   const showSaved = () => {
@@ -24,10 +30,48 @@ export default function AdminSettingsPage() {
 
   const load = async () => {
     setLoading(true)
-    const [s, t] = await Promise.all([fetchSiteSettings(), fetchTiers()])
-    setSettings(s)
-    setTiers(t)
-    setLoading(false)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'load started',data:{},timestamp:Date.now(),hypothesisId:'h3'})}).catch(()=>{});
+    // #endregion
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'calling fetchSiteSettings',data:{},timestamp:Date.now(),hypothesisId:'h2'})}).catch(()=>{});
+      // #endregion
+      const s = await fetchSiteSettings()
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'fetchSiteSettings ok',data:{},timestamp:Date.now(),hypothesisId:'h2'})}).catch(()=>{});
+      // #endregion
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'calling fetchTiers',data:{},timestamp:Date.now(),hypothesisId:'h2'})}).catch(()=>{});
+      // #endregion
+      const t = await fetchTiers()
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'fetchTiers ok',data:{},timestamp:Date.now(),hypothesisId:'h2'})}).catch(()=>{});
+      // #endregion
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'calling fetchLunchSettings',data:{},timestamp:Date.now(),hypothesisId:'h1'})}).catch(()=>{});
+      // #endregion
+      const lunch = await fetchLunchSettings()
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'fetchLunchSettings ok',data:{deadline_hour:lunch.deadline_hour,timezone:lunch.timezone},timestamp:Date.now(),hypothesisId:'h1'})}).catch(()=>{});
+      // #endregion
+      setSettings(s)
+      setTiers(t)
+      setLunchSettings({ deadline_hour: lunch.deadline_hour, timezone: lunch.timezone })
+      const todayRound = await getOrCreateTodayRound(lunch)
+      setTodayLunchRoundClosed(todayRound?.status === 'closed')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setLoadError(msg)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'load failed',data:{err:String(err),name:(err as Error)?.name},timestamp:Date.now(),hypothesisId:'h3'})}).catch(()=>{});
+      // #endregion
+    } finally {
+      setLoading(false)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6a8cd37f-df3b-4cd5-8413-44b4064d90cf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'admin/settings/page.tsx:load',message:'load finished setLoading false',data:{},timestamp:Date.now(),hypothesisId:'h3'})}).catch(()=>{});
+      // #endregion
+    }
   }
 
   useEffect(() => {
@@ -56,6 +100,22 @@ export default function AdminSettingsPage() {
       ),
       supabase.from('site_settings').upsert(
         { key: 'popular_members_min_score', value_json: settings.popular_members_min_score },
+        { onConflict: 'key' }
+      ),
+    ])
+    setSaving(null)
+    showSaved()
+  }
+
+  const handleSaveLunch = async () => {
+    setSaving('lunch')
+    await Promise.all([
+      supabase.from('site_settings').upsert(
+        { key: 'lunch_deadline_hour', value_json: lunchSettings.deadline_hour },
+        { onConflict: 'key' }
+      ),
+      supabase.from('site_settings').upsert(
+        { key: 'lunch_timezone', value_json: lunchSettings.timezone },
         { onConflict: 'key' }
       ),
     ])
@@ -114,8 +174,18 @@ export default function AdminSettingsPage() {
     ])
   }
 
-  if (loading || !settings) {
+  if (loading) {
     return <p className="text-muted-foreground">불러오는 중…</p>
+  }
+  if (loadError || !settings) {
+    return (
+      <div className="space-y-3">
+        <p className="text-destructive">
+          {loadError ?? '설정을 불러오지 못했습니다.'}
+        </p>
+        <Button variant="outline" onClick={() => load()}>다시 시도</Button>
+      </div>
+    )
   }
 
   return (
@@ -228,6 +298,51 @@ export default function AdminSettingsPage() {
           </div>
           <Button onClick={handleSaveSettings} disabled={saving === 'settings'}>
             {saving === 'settings' ? '저장 중…' : '저장'}
+          </Button>
+        </div>
+      </section>
+
+      <section id="lunch" className="mb-10 scroll-mt-4">
+        <h2 className="text-lg font-semibold mb-3">점메추 마감</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          오늘의 점메추 참여/투표 마감 시각. 타임존(예: America/Los_Angeles)과 시(0–23)를 설정하세요.
+        </p>
+        {todayLunchRoundClosed && (
+          <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">
+            오늘 점메추가 이미 마감되어 마감 시각을 바꿀 수 없어요. 날짜가 바뀌면 수정할 수 있어요.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-sm font-medium mb-1">마감 시 (0–23)</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={lunchSettings.deadline_hour}
+              onChange={(e) =>
+                setLunchSettings((s) => ({
+                  ...s,
+                  deadline_hour: Math.max(0, Math.min(23, parseInt(e.target.value, 10) || 0)),
+                }))
+              }
+              disabled={todayLunchRoundClosed}
+              className="rounded border border-border bg-background px-3 py-2 w-24 disabled:opacity-60 disabled:cursor-not-allowed"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">타임존</label>
+            <input
+              type="text"
+              value={lunchSettings.timezone}
+              onChange={(e) => setLunchSettings((s) => ({ ...s, timezone: e.target.value.trim() || LUNCH_DEFAULTS.timezone }))}
+              placeholder="America/Los_Angeles"
+              disabled={todayLunchRoundClosed}
+              className="rounded border border-border bg-background px-3 py-2 w-56 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            />
+          </div>
+          <Button onClick={handleSaveLunch} disabled={saving === 'lunch' || todayLunchRoundClosed}>
+            {saving === 'lunch' ? '저장 중…' : '저장'}
           </Button>
         </div>
       </section>

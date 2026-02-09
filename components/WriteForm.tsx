@@ -10,6 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 
 const MAX_IMAGES = 3
+const POLL_OPTION_MAX_LEN = 25
 const CATEGORIES = [
   { value: 'work', label: '💼 일' },
   { value: 'eat', label: '🍴 먹' },
@@ -45,6 +46,14 @@ export default function WriteForm({
   const [category, setCategory] = useState<string>('story')
   const [isSpicy, setIsSpicy] = useState(false)
   const [images, setImages] = useState<ImagePreview[]>([])
+  const [addModuleType, setAddModuleType] = useState<'none' | 'poll'>('none')
+  const [pollQuestion, setPollQuestion] = useState('')
+  const [pollOption1, setPollOption1] = useState('')
+  const [pollOption2, setPollOption2] = useState('')
+  const [pollOption3, setPollOption3] = useState('')
+  const [pollOption4, setPollOption4] = useState('')
+  const [pollOptionCount, setPollOptionCount] = useState<2 | 3 | 4>(2) // 2 = 찬/반, 3+ = 일반 투표
+  const [pollEnds24h, setPollEnds24h] = useState(false)
 
   const addImages = (files: FileList | null) => {
     if (!files?.length) return
@@ -84,6 +93,25 @@ export default function WriteForm({
     if (!body.trim()) {
       setError('내용을 입력해 주세요.')
       return
+    }
+    if (addModuleType === 'poll') {
+      if (!pollQuestion.trim()) {
+        setError('투표 질문을 입력해 주세요.')
+        return
+      }
+      if (!pollOption1.trim() || !pollOption2.trim()) {
+        setError('투표 옵션은 최소 2개 필요해요.')
+        return
+      }
+      const opts = [pollOption1, pollOption2, pollOption3, pollOption4].slice(0, pollOptionCount)
+      if (opts.some((o) => o.length > POLL_OPTION_MAX_LEN)) {
+        setError(`옵션은 ${POLL_OPTION_MAX_LEN}자까지 입력할 수 있어요.`)
+        return
+      }
+      if (pollOptionCount > 2 && opts.some((o, i) => i >= 2 && !o.trim())) {
+        setError('추가한 옵션을 모두 입력해 주세요.')
+        return
+      }
     }
     const cat = ['work', 'eat', 'home', 'story'].includes(category) ? category : 'story'
     setError(null)
@@ -126,6 +154,37 @@ export default function WriteForm({
           file_path: path,
           position: i + 1,
         })
+      }
+    }
+
+    if (addModuleType === 'poll') {
+      const optCount = pollOptionCount
+      // 옵션 2개 → 찬/반 (post_procon), 3개 이상 → 일반 투표 (post_polls)
+      if (optCount === 2) {
+        const { error: proconErr } = await supabase.from('post_procon').insert({
+          post_id: postId,
+        })
+        if (proconErr) {
+          setSubmitting(false)
+          setError(`찬반 저장 실패: ${proconErr.message}`)
+          return
+        }
+      } else {
+        const endsAt = pollEnds24h ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null
+        const { error: pollErr } = await supabase.from('post_polls').insert({
+          post_id: postId,
+          question: pollQuestion.trim(),
+          option_1: pollOption1.trim(),
+          option_2: pollOption2.trim(),
+          option_3: pollOptionCount >= 3 ? (pollOption3.trim() || null) : null,
+          option_4: pollOptionCount >= 4 ? (pollOption4.trim() || null) : null,
+          ends_at: endsAt,
+        })
+        if (pollErr) {
+          setSubmitting(false)
+          setError(`투표 저장 실패: ${pollErr.message}`)
+          return
+        }
       }
     }
 
@@ -227,6 +286,99 @@ export default function WriteForm({
             </label>
           )}
         </div>
+      </div>
+      <div className="space-y-3 border border-border rounded-lg p-3">
+        <Label className="text-sm font-medium">추가 모듈 (선택)</Label>
+        <div className="flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="addModule"
+              checked={addModuleType === 'none'}
+              onChange={() => setAddModuleType('none')}
+              className="rounded-full"
+            />
+            <span className="text-sm">없음</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="addModule"
+              checked={addModuleType === 'poll'}
+              onChange={() => setAddModuleType('poll')}
+              className="rounded-full"
+            />
+            <span className="text-sm">투표 추가</span>
+          </label>
+        </div>
+        {addModuleType === 'poll' && (
+          <div className="space-y-2 mt-3 pt-3 border-t border-border">
+            <Input
+              value={pollQuestion}
+              onChange={(e) => setPollQuestion(e.target.value)}
+              placeholder="투표 질문"
+              maxLength={80}
+              className="bg-background text-sm"
+            />
+            <Input
+              value={pollOption1}
+              onChange={(e) => setPollOption1(e.target.value)}
+              placeholder="찬"
+              maxLength={POLL_OPTION_MAX_LEN}
+              className="bg-background text-sm"
+            />
+            <Input
+              value={pollOption2}
+              onChange={(e) => setPollOption2(e.target.value)}
+              placeholder="반"
+              maxLength={POLL_OPTION_MAX_LEN}
+              className="bg-background text-sm"
+            />
+            {pollOptionCount >= 3 && (
+              <Input
+                value={pollOption3}
+                onChange={(e) => setPollOption3(e.target.value)}
+                placeholder="옵션 3"
+                maxLength={POLL_OPTION_MAX_LEN}
+                className="bg-background text-sm"
+              />
+            )}
+            {pollOptionCount >= 4 && (
+              <Input
+                value={pollOption4}
+                onChange={(e) => setPollOption4(e.target.value)}
+                placeholder="옵션 4"
+                maxLength={POLL_OPTION_MAX_LEN}
+                className="bg-background text-sm"
+              />
+            )}
+            {pollOptionCount < 4 && (
+              <button
+                type="button"
+                onClick={() => setPollOptionCount((c) => (c < 4 ? (c + 1) as 2 | 3 | 4 : c))}
+                className="w-full py-2.5 rounded-md border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                옵션 추가
+              </button>
+            )}
+            <div className="flex items-center justify-between pt-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox
+                  checked={pollEnds24h}
+                  onCheckedChange={(checked) => setPollEnds24h(checked === true)}
+                />
+                <span className="text-sm text-muted-foreground">24시간 후 마감</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setAddModuleType('none')}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                투표 제거
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex items-center space-x-2">
         <Checkbox

@@ -7,7 +7,8 @@ import CommentBox from './CommentBox'
 import CommentBody from './CommentBody'
 import RelativeTime from '@/components/RelativeTime'
 import AuthorMenu from './AuthorMenu'
-import { userAvatarEmoji, userAvatarColor } from '@/lib/postAvatar'
+import { userAvatarEmoji } from '@/lib/postAvatar'
+import { getAvatarColorClass } from '@/lib/avatarColors'
 
 type Comment = {
   id: string
@@ -115,10 +116,10 @@ export default function CommentsSection({
             targetAnonName={anon}
             currentUserId={currentUserId}
           >
-            <div className={`shrink-0 size-8 rounded-full flex items-center justify-center text-sm overflow-visible ${!avatarMap[node.user_id] ? (avatarColorMap[node.user_id] ?? userAvatarColor(node.user_id)) : 'relative'}`}>
+            <div className={`shrink-0 size-8 rounded-full flex items-center justify-center text-sm overflow-visible ${!avatarMap[node.user_id] ? (avatarColorMap[node.user_id] ?? getAvatarColorClass(null, node.user_id)) : 'relative'}`}>
               {avatarMap[node.user_id] ? (
                 <>
-                  <div className={`absolute inset-0 rounded-full ${avatarColorMap[node.user_id] ?? userAvatarColor(node.user_id)}`} aria-hidden />
+                  <div className={`absolute inset-0 rounded-full ${avatarColorMap[node.user_id] ?? getAvatarColorClass(null, node.user_id)}`} aria-hidden />
                   <div className="relative size-6 rounded-full overflow-hidden bg-background ring-2 ring-background">
                     <Image src={avatarMap[node.user_id]} alt="" width={24} height={24} className="w-full h-full object-cover" />
                   </div>

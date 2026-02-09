@@ -128,6 +128,10 @@ export default function SupportPage() {
     e.preventDefault()
     setFormError(null)
     if (!user || !formName.trim() || !formOneLiner.trim() || !formContact.trim() || !formEmail.trim()) return
+    if (alreadyRegistered) {
+      setFormError('한 계정당 비즈니스 1개만 등록할 수 있어요.')
+      return
+    }
     if (formFile) {
       const err = validateFile(formFile)
       if (err) {

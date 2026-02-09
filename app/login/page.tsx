@@ -1,6 +1,7 @@
 'use client'
 
 import type { User } from '@supabase/supabase-js'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { useEffect, useState } from 'react'
@@ -46,7 +47,10 @@ export default function LoginPage() {
       const returnUrl = from && from !== '/' ? `${window.location.origin}/login?from=${encodeURIComponent(from)}` : window.location.origin
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: returnUrl },
+        options: {
+          redirectTo: returnUrl,
+          queryParams: { prompt: 'select_account' },
+        },
       })
       if (error) {
         alert(error.message)
@@ -98,6 +102,11 @@ export default function LoginPage() {
               {loading ? '로그인 중…' : 'Google로 로그인'}
             </Button>
           )}
+          <p className="text-center text-xs text-muted-foreground mt-3">
+            <Link href={from !== '/' ? `/login/seed?from=${encodeURIComponent(from)}` : '/login/seed'} className="hover:underline">
+              시드 계정으로 로그인 (이메일 + 비밀번호)
+            </Link>
+          </p>
         </CardContent>
       </Card>
     </main>

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import { LayoutDashboard, Flag, FileText, MessageSquare, Users, Sparkles, ScrollText, Settings } from 'lucide-react'
+import { LayoutDashboard, Flag, FileText, MessageSquare, Users, Sparkles, ScrollText, Settings, UserPlus, ImageIcon } from 'lucide-react'
 
 const NAV = [
   { href: '/admin', label: '대시보드', icon: LayoutDashboard },
@@ -13,6 +13,8 @@ const NAV = [
   { href: '/admin/comments', label: '댓글', icon: MessageSquare },
   { href: '/admin/users', label: '유저', icon: Users },
   { href: '/admin/business', label: '비즈니스', icon: Sparkles },
+  { href: '/admin/seed-accounts', label: '시드 계정', icon: UserPlus },
+  { href: '/admin/banners', label: '배너 광고', icon: ImageIcon },
   { href: '/admin/settings', label: '설정', icon: Settings },
   { href: '/admin/logs', label: '활동 로그', icon: ScrollText },
 ]
@@ -25,14 +27,17 @@ export default function AdminLayout({
   const pathname = usePathname()
   const router = useRouter()
   const [admin, setAdmin] = useState<boolean | null>(null)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      const uid = data.session?.user?.id
+      const user = data.session?.user
+      const uid = user?.id
       if (!uid) {
         router.replace('/login?from=/admin')
         return
       }
+      setUserEmail(user?.email ?? null)
       supabase.from('admin_users').select('user_id').eq('user_id', uid).maybeSingle().then(({ data: adminRow }) => {
         if (adminRow) {
           setAdmin(true)
@@ -57,8 +62,9 @@ export default function AdminLayout({
     <div className="min-h-screen flex bg-background text-foreground">
       <aside className="w-56 border-r border-border flex flex-col shrink-0">
         <div className="p-4 border-b border-border">
-          <Link href="/admin" className="font-semibold text-lg">관리자</Link>
-          <p className="text-xs text-muted-foreground mt-0.5">아니스비</p>
+          <Link href="/admin" className="font-semibold text-lg block truncate" title={userEmail ?? undefined}>
+            {userEmail ?? '…'}
+          </Link>
         </div>
         <nav className="p-2 flex flex-col gap-0.5">
           {NAV.map(({ href, label, icon: Icon }) => (

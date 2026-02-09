@@ -3,17 +3,22 @@
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
-import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink } from 'lucide-react'
+import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink, ChevronRight } from 'lucide-react'
 import { getPostImageUrl, getAvatarUrl, getBusinessSpotlightMediaUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
-import { userAvatarEmoji, userAvatarColor } from '@/lib/postAvatar'
-import { fetchSiteSettings, fetchTiers, resolveTier, type SiteSettings, type Tier } from '@/lib/siteSettings'
+import { userAvatarEmoji } from '@/lib/postAvatar'
+import { fetchSiteSettings, fetchTiers, resolveTier, getBannerRotationSeconds, type SiteSettings, type Tier } from '@/lib/siteSettings'
+import { getLunchHallOfFame, getTodayLunchParticipantCount, type HallOfFameEntry } from '@/lib/lunch'
 import RelativeTime from '@/components/RelativeTime'
 import WriteForm from '@/components/WriteForm'
+import LunchSection from '@/components/LunchSection'
+import PollBlock, { type PollData } from '@/components/PollBlock'
+import ProconBar from '@/components/ProconBar'
+import BannerAd from '@/components/BannerAd'
 
 type Post = {
   id: string
@@ -32,18 +37,27 @@ const DEFAULT_BEST_COMMENT_MIN_LIKES = 1
 const DEFAULT_SEOLJJANGI_MIN_POSTS = 2
 
 const FILTERS = [
+  { id: 'all', label: '전체', icon: '📋' },
+  { id: 'story', label: '썰', icon: '🔥' },
   { id: 'work', label: '일', icon: '💻' },
   { id: 'eat', label: '먹', icon: '🍴' },
   { id: 'home', label: '집', icon: '🏠' },
-  { id: 'story', label: '썰', icon: '🔥' },
-  { id: 'all', label: '전체보기', icon: '📋' },
 ] as const
+/** 피드·4칼럼 공통 순서: 썰-먹-일-집 */
+const FILTER_ORDER: (typeof FILTERS)[number]['id'][] = ['all', 'story', 'eat', 'work', 'home']
 const REACTION_EMOJI: Record<string, string> = {
   laugh: '🤣', angry: '😡', mindblown: '🤯', eyes: '👀', chili: '🌶️',
 }
+const LA_TZ = 'America/Los_Angeles'
+function isTodayLA(isoDateStr: string): boolean {
+  const d = new Date(isoDateStr)
+  const today = new Date()
+  return d.toLocaleDateString('en-CA', { timeZone: LA_TZ }) === today.toLocaleDateString('en-CA', { timeZone: LA_TZ })
+}
+const TODAY_PHRASES = ['오늘도 노빠꾸', 'LA 20·30과 함께', '오늘 하루도 화이팅', '같이 올려봐요']
 // 자영업 섹션과 비슷한 채도 (from-red-500/8 수준)
-const TRENDING_GRADIENT = 'bg-gradient-to-b from-pink-400/8 via-purple-400/6 to-transparent dark:from-pink-500/6 dark:to-transparent'
-
+const TRENDING_GRADIENT = 'bg-gradient-to-b from-red-500/8 to-transparent dark:from-red-500/6 dark:to-transparent'
+const BUSINESS_GRADIENT = 'bg-gradient-to-b from-pink-400/8 via-purple-400/6 to-transparent dark:from-pink-500/6 dark:to-transparent'
 function InstagramIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -128,7 +142,7 @@ function AnimateInView({ children, className }: { children: ReactNode; className
 }
 
 function PostCard({
-  post, user, commentCount, reactionCount, postMedia, postFakeViews, anonName, avatarUrl, avatarColorClass, tierLabel, tierBadgeColor, bestCommentPreview,
+  post, user, commentCount, reactionCount, postMedia, postFakeViews, anonName, avatarUrl, avatarColorClass, tierLabel, tierBadgeColor, bestCommentPreview, isLunchWinner, lunchWinCount, pollData, proconData,
 }: {
   post: Post
   user: User | null
@@ -142,9 +156,13 @@ function PostCard({
   tierLabel?: string | null
   tierBadgeColor?: string | null
   bestCommentPreview?: string | null
+  isLunchWinner?: boolean
+  lunchWinCount?: number
+  pollData?: { poll: PollData; counts: number[]; userVoteIndex: number | null } | null
+  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null } | null
 }) {
   const fakeViews = postFakeViews(post.id, commentCount, reactionCount)
-  const colorClass = avatarColorClass ?? userAvatarColor(post.user_id)
+  const colorClass = avatarColorClass ?? getAvatarColorClass(null, post.user_id)
   return (
     <AnimateInView>
       <li className="border-b border-border">
@@ -170,9 +188,14 @@ function PostCard({
                 {tierLabel}
               </span>
             )}
+            {lunchWinCount != null && lunchWinCount > 0 && (
+              <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-0.5" title="점메추 명예의 전당">
+                🏆 {lunchWinCount}
+              </span>
+            )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-1.5 flex-wrap">
+            <div className="flex items-baseline gap-1.5 flex-wrap w-full">
               <span className="font-semibold text-sm">{anonName}</span>
               <span className="text-muted-foreground text-sm">·</span>
               <RelativeTime date={post.created_at} />
@@ -180,7 +203,7 @@ function PostCard({
                 const f = FILTERS.find((x) => x.id === post.category)
                 if (!f || f.id === 'all') return null
                 return (
-                  <span className="text-muted-foreground text-xs font-medium ml-1" aria-label={`카테고리: ${f.label}`}>
+                  <span className="text-muted-foreground text-xs font-medium ml-auto shrink-0" aria-label={`카테고리: ${f.label}`}>
                     {f.icon} {f.label}
                   </span>
                 )
@@ -211,6 +234,16 @@ function PostCard({
               <p className="text-[13px] text-muted-foreground mt-2 pl-3 border-l-2 border-red-500/40 line-clamp-1">
                 <span className="font-medium text-foreground/90">배댓</span> {bestCommentPreview}
               </p>
+            )}
+            {pollData && (
+              <div className="mt-2" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+                <PollBlock poll={pollData.poll} counts={pollData.counts} userVoteIndex={pollData.userVoteIndex} postUserId={post.user_id} currentUserId={user?.id ?? null} compact />
+              </div>
+            )}
+            {proconData && (
+              <div className="mt-2" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+                <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact />
+              </div>
             )}
             {postMedia && postMedia.length > 0 && (
               post.is_spicy && !user ? (
@@ -249,7 +282,7 @@ function PostCard({
 }
 
 function PostGridCard({
-  post, user, commentCount, reactionCount, postMedia, anonName, avatarUrl, avatarColorClass,
+  post, user, commentCount, reactionCount, postMedia, anonName, avatarUrl, avatarColorClass, isLunchWinner, lunchWinCount, pollData, proconData,
 }: {
   post: Post
   user: User | null
@@ -259,11 +292,17 @@ function PostGridCard({
   anonName: string
   avatarUrl?: string | null
   avatarColorClass?: string
+  isLunchWinner?: boolean
+  lunchWinCount?: number
+  pollData?: { poll: PollData; counts: number[]; userVoteIndex: number | null } | null
+  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null } | null
 }) {
   const firstMedia = postMedia?.[0]
-  const colorClass = avatarColorClass ?? userAvatarColor(post.user_id)
+  const colorClass = avatarColorClass ?? getAvatarColorClass(null, post.user_id)
   const titleOrBody = (post.title || post.body).replace(/\s+/g, ' ').trim().slice(0, 60)
   const isSpicyBlur = post.is_spicy && !user
+  const categoryFilter = post.category ? FILTERS.find((x) => x.id === post.category) : null
+  const categoryLabel = categoryFilter && categoryFilter.id !== 'all' ? categoryFilter.label : null
   return (
     <li>
       <Link
@@ -271,6 +310,16 @@ function PostGridCard({
         className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow block"
         aria-label={post.title || '글 보기'}
       >
+        {pollData && (
+          <div className="p-2 shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+            <PollBlock poll={pollData.poll} counts={pollData.counts} userVoteIndex={pollData.userVoteIndex} postUserId={post.user_id} currentUserId={user?.id ?? null} compact />
+          </div>
+        )}
+        {proconData && (
+          <div className="p-2 shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+            <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact />
+          </div>
+        )}
         <div className="relative w-full aspect-[4/3] bg-muted shrink-0">
           {firstMedia && !isSpicyBlur ? (
             <Image src={firstMedia} alt="" fill className="object-cover" sizes="(max-width: 600px) 50vw, 284px" />
@@ -282,19 +331,32 @@ function PostGridCard({
           )}
         </div>
         <div className="p-3 flex flex-col gap-2 min-w-0">
-          <p className="text-sm font-medium text-foreground line-clamp-2 leading-snug">
-            {isSpicyBlur ? '멤버만 공개' : titleOrBody}
-          </p>
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <p className="text-sm font-medium text-foreground line-clamp-2 leading-snug min-w-0 flex-1">
+              {isSpicyBlur ? '멤버만 공개' : titleOrBody}
+            </p>
+            {categoryLabel && categoryFilter && (
+              <span className="text-xs text-muted-foreground font-medium shrink-0" aria-label={`카테고리: ${categoryLabel}`}>
+                {categoryFilter.icon} {categoryLabel}
+              </span>
+            )}
+          </div>
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <div className={`size-6 rounded-full flex items-center justify-center text-xs shrink-0 overflow-hidden ${!avatarUrl ? colorClass : ''}`}>
-                {avatarUrl ? (
-                  <Image src={avatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
-                ) : (
-                  userAvatarEmoji(post.user_id)
+            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+              <div className="flex flex-col items-center gap-0.5">
+                <div className={`size-6 rounded-full flex items-center justify-center text-xs shrink-0 overflow-hidden ${!avatarUrl ? colorClass : ''}`}>
+                  {avatarUrl ? (
+                    <Image src={avatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
+                  ) : (
+                    userAvatarEmoji(post.user_id)
+                  )}
+                </div>
+                {lunchWinCount != null && lunchWinCount > 0 && (
+                  <span className="text-[9px] font-semibold text-amber-600 dark:text-amber-400" title="점메추 명예의 전당">🏆{lunchWinCount}</span>
                 )}
               </div>
               <span className="text-xs text-muted-foreground truncate">{anonName}</span>
+              {isLunchWinner && <span className="shrink-0 text-[10px] font-semibold text-amber-600 dark:text-amber-400" title="오늘의 점메추왕">🍱</span>}
             </div>
             <div className="flex items-center gap-2 text-muted-foreground text-xs tabular-nums shrink-0">
               <span className="flex items-center gap-0.5"><MessageCircle className="size-3.5" aria-hidden />{commentCount}</span>
@@ -304,6 +366,74 @@ function PostGridCard({
         </div>
       </Link>
     </li>
+  )
+}
+
+function SpotlightPollCard({
+  spotlight,
+  user,
+}: {
+  spotlight: { post: Post; poll: PollData; counts: number[]; userVoteIndex: number | null }
+  user: User | null
+}) {
+  const { post, poll, counts, userVoteIndex } = spotlight
+  return (
+    <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm p-2">
+      <div
+        onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+        role="presentation"
+      >
+        <PollBlock
+          poll={poll}
+          counts={counts}
+          userVoteIndex={userVoteIndex}
+          postUserId={post.user_id}
+          currentUserId={user?.id ?? null}
+          compact
+        />
+      </div>
+      <Link
+        href={`/p/${post.id}`}
+        className="mt-1 text-xs text-muted-foreground hover:text-foreground inline-block"
+      >
+        글 보기 →
+      </Link>
+    </div>
+  )
+}
+
+function SpotlightProconCard({
+  spotlight,
+  user,
+}: {
+  spotlight: { post: Post; proCount: number; conCount: number; userVote: 'pro' | 'con' | null }
+  user: User | null
+}) {
+  const { post, proCount, conCount, userVote } = spotlight
+  const question = (post.title ?? '').trim() || (post.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 50) || '이 글에 대한 의견'
+  return (
+    <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm p-2">
+      <p className="text-xs font-medium text-foreground mb-1 line-clamp-2">{question}{question.length >= 50 ? '…' : ''}</p>
+      <div
+        onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+        role="presentation"
+      >
+        <ProconBar
+          postId={post.id}
+          proCount={proCount}
+          conCount={conCount}
+          userVote={userVote}
+          currentUserId={user?.id ?? null}
+          compact
+        />
+      </div>
+      <Link
+        href={`/p/${post.id}`}
+        className="mt-1 text-xs text-muted-foreground hover:text-foreground inline-block"
+      >
+        글 보기 →
+      </Link>
+    </div>
   )
 }
 
@@ -317,8 +447,9 @@ export default function HomePage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [fakeLiveCount, setFakeLiveCount] = useState(23)
+  const [lunchParticipantCount, setLunchParticipantCount] = useState<number | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
-  const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string } | null>(null)
+  const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post' | 'poll_vote' | 'procon_vote'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string; proconSide?: 'pro' | 'con' } | null>(null)
   const [notificationKey, setNotificationKey] = useState(0)
   const [dark, setDark] = useState(false)
   const [writeOpen, setWriteOpen] = useState(false)
@@ -328,6 +459,8 @@ export default function HomePage() {
   const [avatarColorMap, setAvatarColorMap] = useState<Record<string, string>>({})
   const [tierByUser, setTierByUser] = useState<Record<string, { name: string; badge_color: string | null } | null>>({})
   const [bestCommentByPost, setBestCommentByPost] = useState<Record<string, string>>({})
+  const [lunchWinnerUserIds, setLunchWinnerUserIds] = useState<Set<string>>(new Set())
+  const [lunchHallOfFame, setLunchHallOfFame] = useState<HallOfFameEntry[]>([])
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set())
   const [headerAnonName, setHeaderAnonName] = useState<string | null>(null)
   const [headerAvatarUrl, setHeaderAvatarUrl] = useState<string | null>(null)
@@ -343,7 +476,46 @@ export default function HomePage() {
   const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null)
   const [tiers, setTiers] = useState<Tier[]>([])
   const [trendingPostsData, setTrendingPostsData] = useState<Post[]>([])
+  const [categoryPoolPosts, setCategoryPoolPosts] = useState<Post[]>([])
+  const [bestPollSpotlight, setBestPollSpotlight] = useState<{
+    post: Post
+    poll: PollData
+    counts: number[]
+    userVoteIndex: number | null
+  } | null>(null)
+  const [bestProconSpotlight, setBestProconSpotlight] = useState<{
+    post: Post
+    proCount: number
+    conCount: number
+    userVote: 'pro' | 'con' | null
+  } | null>(null)
+  const [pollByPostId, setPollByPostId] = useState<Record<string, { poll: PollData; counts: number[]; userVoteIndex: number | null }>>({})
+  const [proconByPostId, setProconByPostId] = useState<Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null }>>({})
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const hasLoadedOnceRef = useRef(false)
+  const savedScrollRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const source = [...posts, ...trendingPostsData]
+    if (source.length === 0) return
+    setCategoryPoolPosts((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]))
+      source.forEach((p) => map.set(p.id, p))
+      return Array.from(map.values()).slice(-400)
+    })
+  }, [posts, trendingPostsData])
+
+  const todayPostCount = useMemo(() => {
+    const source = [...posts, ...trendingPostsData]
+    const todayIds = new Set(source.filter((p) => isTodayLA(p.created_at)).map((p) => p.id))
+    return todayIds.size
+  }, [posts, trendingPostsData])
+
+  const todayPhrase = useMemo(() => TODAY_PHRASES[new Date().getDay() % TODAY_PHRASES.length], [])
+
+  useEffect(() => {
+    getTodayLunchParticipantCount().then(setLunchParticipantCount)
+  }, [])
 
   useEffect(() => {
     Promise.all([fetchSiteSettings(), fetchTiers()]).then(([s, t]) => {
@@ -501,6 +673,41 @@ export default function HomePage() {
         setNotification({ type: 'reaction', postId, anonName: p?.anon_name?.trim() || '익명', actorUserId: uid, reactionEmoji: REACTION_EMOJI[reactionType] ?? '🌶️', actorAvatarUrl: actorUrl ?? undefined, actorAvatarColorClass: actorColor })
         setNotificationKey((k) => k + 1)
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_poll_votes' }, async (payload) => {
+        const uid = (payload.new as { user_id?: string })?.user_id
+        const me = userIdRef.current
+        if (!uid || uid === me) return
+        try { if (localStorage.getItem('notifications') === 'false') return } catch {}
+        const postId = (payload.new as { post_id: string }).post_id
+        const [profileRes, snippetRes] = await Promise.all([
+          supabase.from('profiles').select('anon_name, avatar_path, profile_color_index').eq('user_id', uid).single(),
+          supabase.rpc('get_post_notification_snippet', { p_post_id: postId }),
+        ])
+        const p = profileRes.data as { anon_name?: string | null; avatar_path?: string | null; profile_color_index?: number | null } | null
+        const titleSnippet = (snippetRes.data as string | null)?.trim() || undefined
+        const actorUrl = p ? getAvatarUrl(p.avatar_path ?? null) : null
+        const actorColor = p ? getAvatarColorClass(p.profile_color_index ?? null, uid) : undefined
+        setNotification({ type: 'poll_vote', postId, anonName: p?.anon_name?.trim() || '익명', actorUserId: uid, actorAvatarUrl: actorUrl ?? undefined, actorAvatarColorClass: actorColor, titleSnippet })
+        setNotificationKey((k) => k + 1)
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'post_procon_votes' }, async (payload) => {
+        const uid = (payload.new as { user_id?: string })?.user_id
+        const me = userIdRef.current
+        if (!uid || uid === me) return
+        try { if (localStorage.getItem('notifications') === 'false') return } catch {}
+        const postId = (payload.new as { post_id: string }).post_id
+        const side = (payload.new as { side?: string })?.side as 'pro' | 'con' | undefined
+        const [profileRes, snippetRes] = await Promise.all([
+          supabase.from('profiles').select('anon_name, avatar_path, profile_color_index').eq('user_id', uid).single(),
+          supabase.rpc('get_post_notification_snippet', { p_post_id: postId }),
+        ])
+        const p = profileRes.data as { anon_name?: string | null; avatar_path?: string | null; profile_color_index?: number | null } | null
+        const titleSnippet = (snippetRes.data as string | null)?.trim() || undefined
+        const actorUrl = p ? getAvatarUrl(p.avatar_path ?? null) : null
+        const actorColor = p ? getAvatarColorClass(p.profile_color_index ?? null, uid) : undefined
+        setNotification({ type: 'procon_vote', postId, anonName: p?.anon_name?.trim() || '익명', actorUserId: uid, actorAvatarUrl: actorUrl ?? undefined, actorAvatarColorClass: actorColor, proconSide: side, titleSnippet })
+        setNotificationKey((k) => k + 1)
+      })
         .subscribe((status, err) => {
           if (status === 'CHANNEL_ERROR' && err) {
             console.warn('[Realtime] subscription error:', err)
@@ -518,6 +725,10 @@ export default function HomePage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+    return () => subscription.unsubscribe()
   }, [])
   useEffect(() => {
     if (!user?.id) {
@@ -567,7 +778,7 @@ export default function HomePage() {
         supabase.from('post_reactions').select('post_id').in('post_id', postIds),
         supabase.from('comments').select('post_id').in('post_id', postIds),
         supabase.from('post_media').select('post_id, file_path, position').in('post_id', postIds).order('position'),
-        uniqUserIds.length > 0 ? supabase.from('profiles').select('user_id, anon_name, avatar_path, profile_color_index').in('user_id', uniqUserIds) : Promise.resolve({ data: [] }),
+        uniqUserIds.length > 0 ? supabase.from('profiles').select('user_id, anon_name, avatar_path, profile_color_index, lunch_winner_at').in('user_id', uniqUserIds) : Promise.resolve({ data: [] }),
         uniqUserIds.length > 0 ? supabase.from('posts').select('user_id').in('user_id', uniqUserIds).eq('status', 'visible') : Promise.resolve({ data: [] }),
         supabase.from('comments').select('id, post_id, body').in('post_id', postIds),
         uniqUserIds.length > 0 ? supabase.from('comments').select('user_id').in('user_id', uniqUserIds) : Promise.resolve({ data: [] }),
@@ -580,12 +791,16 @@ export default function HomePage() {
       const anonByUser: Record<string, string> = {}
       const avatarByUser: Record<string, string> = {}
       const colorByUser: Record<string, string> = {}
-      profilesRes.data?.forEach((p: { user_id: string; anon_name: string | null; avatar_path?: string | null; profile_color_index?: number | null }) => {
+      const todayLA = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+      const newLunchWinnerIds = new Set<string>()
+      profilesRes.data?.forEach((p: { user_id: string; anon_name: string | null; avatar_path?: string | null; profile_color_index?: number | null; lunch_winner_at?: string | null }) => {
         anonByUser[p.user_id] = p.anon_name?.trim() || '익명'
         const url = getAvatarUrl(p.avatar_path ?? null)
         if (url) avatarByUser[p.user_id] = url
         colorByUser[p.user_id] = getAvatarColorClass(p.profile_color_index ?? null, p.user_id)
+        if (p.lunch_winner_at === todayLA) newLunchWinnerIds.add(p.user_id)
       })
+      setLunchWinnerUserIds((prev) => new Set([...prev, ...newLunchWinnerIds]))
       const postCountByUser: Record<string, number> = {}
       uniqUserIds.forEach((id) => { postCountByUser[id] = 0 })
       ;(postsByUserRes.data ?? []).forEach((r: { user_id: string }) => {
@@ -656,15 +871,61 @@ export default function HomePage() {
       setReactionCounts((prev) => ({ ...prev, ...reactionCount }))
       setCommentCounts((prev) => ({ ...prev, ...commentCount }))
       setPostMedia((prev) => ({ ...prev, ...mediaByPost }))
+
+      const { data: pollsRows } = await supabase.from('post_polls').select('id, post_id, question, option_1, option_2, option_3, option_4, ends_at').in('post_id', postIds)
+      const pollPostIds = (pollsRows ?? []).map((r: { post_id: string }) => r.post_id)
+      if (pollPostIds.length > 0) {
+        const { data: pollVotes } = await supabase.from('post_poll_votes').select('post_id, option_index, user_id').in('post_id', pollPostIds)
+        const votesList = (pollVotes ?? []) as { post_id: string; option_index: number; user_id: string }[]
+        const currentUserId = user?.id ?? null
+        const newPollByPostId: Record<string, { poll: PollData; counts: number[]; userVoteIndex: number | null }> = {}
+        for (const row of pollsRows ?? []) {
+          const p = row as { id: string; post_id: string; question: string; option_1: string; option_2: string; option_3: string | null; option_4: string | null; ends_at: string | null }
+          const votes = votesList.filter((v) => v.post_id === p.post_id)
+          const counts = [0, 0, 0, 0]
+          votes.forEach((v) => { if (v.option_index >= 0 && v.option_index <= 3) counts[v.option_index]++ })
+          let userVoteIndex: number | null = null
+          if (currentUserId) {
+            const myVote = votes.find((v) => v.user_id === currentUserId)
+            if (myVote != null) userVoteIndex = myVote.option_index
+          }
+          newPollByPostId[p.post_id] = { poll: p as PollData, counts, userVoteIndex }
+        }
+        setPollByPostId((prev) => ({ ...prev, ...newPollByPostId }))
+      }
+
+      const { data: proconRows } = await supabase.from('post_procon').select('post_id').in('post_id', postIds)
+      const proconPostIds = (proconRows ?? []).map((r: { post_id: string }) => r.post_id)
+      if (proconPostIds.length > 0) {
+        const { data: proconVotes } = await supabase.from('post_procon_votes').select('post_id, side, user_id').in('post_id', proconPostIds)
+        const votesList = (proconVotes ?? []) as { post_id: string; side: string; user_id: string }[]
+        const currentUserId = user?.id ?? null
+        const newProconByPostId: Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null }> = {}
+        for (const postId of proconPostIds) {
+          const votes = votesList.filter((v) => v.post_id === postId)
+          const proCount = votes.filter((v) => v.side === 'pro').length
+          const conCount = votes.filter((v) => v.side === 'con').length
+          let userVote: 'pro' | 'con' | null = null
+          if (currentUserId) {
+            const my = votes.find((v) => v.user_id === currentUserId)
+            if (my) userVote = my.side as 'pro' | 'con'
+          }
+          newProconByPostId[postId] = { proCount, conCount, userVote }
+        }
+        setProconByPostId((prev) => ({ ...prev, ...newProconByPostId }))
+      }
     },
-    [siteSettings, tiers]
+    [siteSettings, tiers, user?.id]
   )
 
   useEffect(() => {
     if (siteSettings == null || tiers.length === 0) return
-    setPosts([])
-    setHasMore(true)
-    setInitialLoading(true)
+    const isFilterChange = hasLoadedOnceRef.current
+    if (!isFilterChange) {
+      setPosts([])
+      setHasMore(true)
+      setInitialLoading(true)
+    }
     let cancelled = false
     const run = async () => {
       const blocked =
@@ -677,14 +938,29 @@ export default function HomePage() {
       const blockedSet = new Set(blocked)
       setBlockedIds(blockedSet)
       const filtered = blockedSet.size > 0 ? data.filter((p) => !blockedSet.has(p.user_id)) : data
+      if (isFilterChange && typeof window !== 'undefined') savedScrollRef.current = window.scrollY
       setPosts(filtered)
       setHasMore(filtered.length === PAGE_SIZE)
       await fetchCountsAndThumbnails(filtered)
-      if (!cancelled) setInitialLoading(false)
+      if (!cancelled) {
+        setInitialLoading(false)
+        hasLoadedOnceRef.current = true
+      }
     }
     run()
     return () => { cancelled = true }
   }, [selectedFilter, spicyOnly, fetchBatch, fetchCountsAndThumbnails, user?.id, siteSettings, tiers])
+
+  useEffect(() => {
+    if (savedScrollRef.current == null) return
+    const y = savedScrollRef.current
+    savedScrollRef.current = null
+    requestAnimationFrame(() => { window.scrollTo(0, y) })
+  }, [posts, selectedFilter])
+
+  useEffect(() => {
+    getLunchHallOfFame(10).then(setLunchHallOfFame)
+  }, [])
 
   useEffect(() => {
     if (siteSettings == null || tiers.length === 0) return
@@ -709,6 +985,63 @@ export default function HomePage() {
         })
     })
   }, [siteSettings, tiers.length, fetchCountsAndThumbnails])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      const [pollRes, proconRes] = await Promise.all([
+        supabase.rpc('get_best_poll_post'),
+        supabase.rpc('get_best_procon_post'),
+      ])
+      if (cancelled) return
+      const pollPayload = (Array.isArray(pollRes.data) ? pollRes.data[0] : pollRes.data) as { post_id: string; total_votes: number } | null
+      const proconPayload = (Array.isArray(proconRes.data) ? proconRes.data[0] : proconRes.data) as { post_id: string; total_votes: number } | null
+
+      if (pollPayload?.post_id) {
+        const postRow = await supabase.from('posts').select('id, user_id, title, body, is_spicy, created_at, category').eq('id', pollPayload.post_id).eq('status', 'visible').maybeSingle()
+        if (!cancelled && postRow.data) {
+          const post = postRow.data as Post
+          const [pollRow, votesRow] = await Promise.all([
+            supabase.from('post_polls').select('id, post_id, question, option_1, option_2, option_3, option_4, ends_at').eq('post_id', post.id).maybeSingle(),
+            supabase.from('post_poll_votes').select('option_index, user_id').eq('post_id', post.id),
+          ])
+          if (cancelled) return
+          const poll = pollRow.data as PollData | null
+          const votes = (votesRow.data ?? []) as { option_index: number; user_id: string }[]
+          const counts = [0, 0, 0, 0]
+          votes.forEach((v) => { if (v.option_index >= 0 && v.option_index <= 3) counts[v.option_index]++ })
+          let userVoteIndex: number | null = null
+          if (user?.id) {
+            const myVote = votes.find((v) => v.user_id === user.id)
+            if (myVote != null) userVoteIndex = myVote.option_index
+          }
+          if (poll) {
+            setBestPollSpotlight({ post, poll, counts, userVoteIndex })
+          }
+        }
+      }
+
+      if (proconPayload?.post_id) {
+        const postRow = await supabase.from('posts').select('id, user_id, title, body, is_spicy, created_at, category').eq('id', proconPayload.post_id).eq('status', 'visible').maybeSingle()
+        if (!cancelled && postRow.data) {
+          const post = postRow.data as Post
+          const votesRow = await supabase.from('post_procon_votes').select('side, user_id').eq('post_id', post.id)
+          if (cancelled) return
+          const votes = (votesRow.data ?? []) as { side: string; user_id: string }[]
+          const proCount = votes.filter((v) => v.side === 'pro').length
+          const conCount = votes.filter((v) => v.side === 'con').length
+          let userVote: 'pro' | 'con' | null = null
+          if (user?.id) {
+            const my = votes.find((v) => v.user_id === user.id)
+            if (my) userVote = my.side as 'pro' | 'con'
+          }
+          setBestProconSpotlight({ post, proCount, conCount, userVote })
+        }
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [user?.id, fetchCountsAndThumbnails])
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return
@@ -761,16 +1094,34 @@ export default function HomePage() {
           })
           .slice(0, trendingMax)
       : []
+  const spotlightPostIds = new Set<string>()
+  if (bestPollSpotlight) spotlightPostIds.add(bestPollSpotlight.post.id)
+  if (bestProconSpotlight) spotlightPostIds.add(bestProconSpotlight.post.id)
   const trendingPostsDisplay =
     trendingPostsData.length > 0
-      ? trendingPostsData.filter((p) => !blockedIds.has(p.user_id))
-      : trendingFromFeed
+      ? trendingPostsData.filter((p) => !blockedIds.has(p.user_id) && !spotlightPostIds.has(p.id))
+      : trendingFromFeed.filter((p) => !spotlightPostIds.has(p.id))
   const trendingIds = new Set(trendingPostsDisplay.map((p) => p.id))
   const latestPosts = filteredPosts.filter((p) => !trendingIds.has(p.id))
 
+  const CATEGORY_COLUMN_IDS = ['story', 'eat', 'work', 'home'] as const
+  const poolForCategories =
+    blockedIds.size > 0
+      ? categoryPoolPosts.filter((p) => !blockedIds.has(p.user_id))
+      : categoryPoolPosts
+  const postsByCategory = CATEGORY_COLUMN_IDS.map((catId) => {
+    const list = poolForCategories
+      .filter((p) => p.category === catId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 5)
+    return { catId, posts: list }
+  })
+  const hasAnyCategoryPosts = postsByCategory.some((c) => c.posts.length > 0)
+  const lunchWinCountByUserId: Record<string, number> = Object.fromEntries(lunchHallOfFame.map((e) => [e.user_id, e.win_count]))
+
   return (
-    <main className="min-h-screen max-w-[600px] mx-auto border-x border-border bg-background">
-      <header className="sticky top-0 z-10 flex items-center justify-between px-4 h-14 border-b border-border bg-background/95 backdrop-blur-md">
+    <main className="min-h-screen max-w-[600px] mx-auto bg-background">
+      <header className="sticky top-0 z-10 flex items-center justify-between px-4 h-14 bg-background/95 backdrop-blur-md shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-lg font-bold tracking-tight text-foreground shrink-0">아니스비</h1>
           <select
@@ -795,7 +1146,7 @@ export default function HomePage() {
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
           {user ? (
-            <Button variant="outline" size="sm" className="rounded-full border-border text-foreground text-sm" onClick={() => supabase.auth.signOut()}>
+            <Button variant="outline" size="sm" className="rounded-full border-border text-foreground text-sm" onClick={async () => { await supabase.auth.signOut(); setUser(null); }}>
               로그아웃
             </Button>
           ) : (
@@ -808,7 +1159,11 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="px-4 py-6 space-y-3">
+      <div className="px-4 py-2">
+        <BannerAd slotKey="home-below-header" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-below-header') : 3} />
+      </div>
+
+      <section className="rounded-t-xl px-4 py-6 space-y-3 bg-background">
         <p className="text-lg font-semibold text-foreground leading-snug">
           20·30의 노빠꾸 커뮤니티 🥵
         </p>
@@ -819,7 +1174,7 @@ export default function HomePage() {
         >
           어떤 이야기가 궁금하세요?
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
             <span className="relative flex size-2.5">
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -827,12 +1182,131 @@ export default function HomePage() {
             </span>
             지금 {fakeLiveCount}명 접속중
           </span>
+          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+            오늘 새 글 {todayPostCount}개
+          </span>
+          {lunchParticipantCount !== null && (
+            <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+              점메추 {lunchParticipantCount}명 참여
+            </span>
+          )}
+          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+            {todayPhrase}
+          </span>
         </div>
       </section>
 
-      <SectionDivider />
+      {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) && (
+        <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 ${TRENDING_GRADIENT}`} aria-label="인기 글">
+          <h2 className="text-base font-semibold text-foreground mb-3">LA 20·30이 많이 본 글</h2>
+          {trendingPostsDisplay.length > 0 && (
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 mb-5">
+              {trendingPostsDisplay.map((post) => (
+                <PostGridCard
+                  key={post.id}
+                  post={post}
+                  user={user}
+                  commentCount={commentCounts[post.id] ?? 0}
+                  reactionCount={reactionCounts[post.id] ?? 0}
+                  postMedia={postMedia[post.id]}
+                  anonName={anonMap[post.user_id] ?? '익명'}
+                  avatarUrl={avatarMap[post.user_id]}
+                  avatarColorClass={avatarColorMap[post.user_id]}
+                  isLunchWinner={lunchWinnerUserIds.has(post.user_id)}
+                  lunchWinCount={lunchWinCountByUserId[post.user_id]}
+                  pollData={pollByPostId[post.id]}
+                  proconData={proconByPostId[post.id]}
+                />
+              ))}
+            </ul>
+          )}
+          {(bestPollSpotlight || bestProconSpotlight) && (
+            <div className="flex flex-col gap-2 mb-5" aria-label="투표·찬반">
+              {bestPollSpotlight && (
+                <div className="min-w-0">
+                  <SpotlightPollCard spotlight={bestPollSpotlight} user={user} />
+                </div>
+              )}
+              {bestProconSpotlight && (
+                <div className="min-w-0">
+                  <SpotlightProconCard spotlight={bestProconSpotlight} user={user} />
+                </div>
+              )}
+            </div>
+          )}
+          {hasAnyCategoryPosts && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-3">
+              {postsByCategory.map(({ catId, posts: list }) => {
+                const filterMeta = FILTERS.find((f) => f.id === catId)
+                const label = filterMeta?.label ?? catId
+                const icon = filterMeta?.icon ?? '•'
+                const scrollToLatestAndSelect = () => {
+                  setSelectedFilter(catId)
+                  setTimeout(() => {
+                    document.getElementById('latest-posts')?.scrollIntoView({ behavior: 'smooth' })
+                  }, 0)
+                }
+                return (
+                  <div key={catId} className="min-w-0">
+                    <h3 className="text-xs font-semibold text-foreground mb-0.5 flex items-center justify-between gap-1">
+                      <span className="flex items-center gap-1 min-w-0 text-foreground">
+                        <span className="text-muted-foreground shrink-0" aria-hidden>{icon}</span>
+                        <span className="truncate">{label}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={scrollToLatestAndSelect}
+                        className="shrink-0 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label={`${label} 더보기`}
+                      >
+                        더보기
+                        <ChevronRight className="size-3" aria-hidden />
+                      </button>
+                    </h3>
+                    <div className="w-[60%] border-b border-border/40 mb-1" aria-hidden />
+                    <ul className="space-y-0 divide-y divide-border/40">
+                      {list.map((post) => {
+                        const title = (post.title ?? '').trim() || '제목 없음'
+                        const commentCount = commentCounts[post.id] ?? 0
+                        return (
+                          <li key={post.id} className="py-1 first:pt-0">
+                            <Link
+                              href={`/p/${post.id}`}
+                              className="flex items-center gap-1 min-w-0 group"
+                            >
+                              <span className="truncate text-xs text-foreground group-hover:underline flex-1 min-w-0">
+                                {title}
+                              </span>
+                              <span className="flex items-center gap-0.5 shrink-0 text-red-500 dark:text-red-400">
+                                <Plus className="size-3" aria-hidden />
+                                <span className="text-[10px] font-bold tabular-nums">{commentCount}</span>
+                              </span>
+                            </Link>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
-      <section className="px-4 py-6 bg-gradient-to-b from-red-500/8 to-transparent dark:from-red-500/6 dark:to-transparent">
+      <div className="px-4 py-2">
+        <BannerAd slotKey="home-between-trending-lunch" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-trending-lunch') : 3} />
+      </div>
+
+      <section id="lunch" aria-label="점메추">
+        <LunchSection user={user} hallOfFame={lunchHallOfFame} feedAvatarMap={avatarMap} />
+      </section>
+
+      <div className="px-4 py-2">
+        <BannerAd slotKey="home-between-lunch-feed" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-lunch-feed') : 3} />
+      </div>
+
+      <section className={`rounded-t-xl -mt-3 px-4 py-6 ${BUSINESS_GRADIENT}`}>
         <div className="flex items-start gap-2 mb-3">
           <span className="shrink-0 size-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 dark:text-red-400" aria-hidden>
             <Sparkles className="size-4" />
@@ -917,10 +1391,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      <SectionDivider />
-
-      {popularMembers.length > 0 && (
-        <section className="px-4 py-6">
+      {false && popularMembers.length > 0 && (
+        <section className="rounded-t-xl -mt-3 px-4 py-6" aria-hidden>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-foreground">인기 멤버</h2>
             <span className="text-xs text-muted-foreground">이번 주 기준</span>
@@ -951,88 +1423,84 @@ export default function HomePage() {
         </section>
       )}
 
-      <SectionDivider />
-
-      <div id="feed-filters" className="flex gap-3 px-4 py-4 overflow-x-auto shrink-0 scroll-smooth">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            onClick={() => setSelectedFilter(f.id)}
-            className={`flex shrink-0 flex-col items-center gap-1.5 rounded-full p-3 min-w-[56px] transition-colors ${selectedFilter === f.id ? 'bg-foreground text-background ring-2 ring-foreground/20' : 'bg-muted/70 text-muted-foreground hover:bg-muted'}`}
-            aria-label={f.label}
-            aria-pressed={selectedFilter === f.id}
-          >
-            <span className="text-xl leading-none" aria-hidden>{f.icon ?? '📋'}</span>
-            <span className="text-[11px] font-medium leading-tight">{f.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <SectionDivider />
-
       {initialLoading && posts.length === 0 && (
         <ul>
           {[1, 2, 3].map((i) => <PostCardSkeleton key={i} />)}
         </ul>
       )}
-      {!initialLoading && posts.length === 0 && (
-        <div className="py-16 text-center text-muted-foreground text-sm">
-          아직 글이 없어.
-        </div>
-      )}
-      {!initialLoading && posts.length > 0 && filteredPosts.length === 0 && (
-        <div className="py-16 text-center text-muted-foreground text-sm">
-          SPICY 글이 없어.
-        </div>
-      )}
-
-      {!initialLoading && filteredPosts.length > 0 && (
-        <>
-          {trendingPostsDisplay.length > 0 && (
-            <section id="trending" className={`px-4 py-6 ${TRENDING_GRADIENT}`} aria-label="인기 글">
-              <h2 className="text-base font-semibold text-foreground mb-3">LA 20·30이 많이 본 글</h2>
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {trendingPostsDisplay.map((post) => (
-                  <PostGridCard
+      {!initialLoading && (
+        <section id="latest-posts" className="rounded-t-xl -mt-3 pt-2 pb-4 bg-background" aria-label="최신 글">
+          <div className="px-4 flex flex-wrap items-center gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-foreground shrink-0">방금 올라온 글</h2>
+            <div id="feed-filters" className="flex flex-wrap items-center gap-1.5">
+              {FILTER_ORDER.map((id) => {
+                const f = FILTERS.find((x) => x.id === id)
+                if (!f) return null
+                const isSelected = selectedFilter === f.id
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setSelectedFilter(f.id)}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${isSelected ? 'bg-foreground text-background' : 'bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                    aria-label={f.label}
+                    aria-pressed={isSelected}
+                  >
+                    <span aria-hidden>{f.icon}</span>
+                    <span>{f.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {posts.length === 0 ? (
+            <div className="py-16 text-center text-muted-foreground text-sm">
+              아직 글이 없어.
+            </div>
+          ) : filteredPosts.length === 0 ? (
+            <div className="py-16 text-center text-muted-foreground text-sm">
+              이 카테고리에 글이 없어.
+            </div>
+          ) : (
+            <ul>
+              {latestPosts.flatMap((post, i) => {
+                const nodes: ReactNode[] = []
+                const feedBannerEvery = siteSettings?.banner_in_feed_every_n_posts ?? 5
+                if (i > 0 && i % feedBannerEvery === 0) {
+                  nodes.push(
+                    <li key={`banner-${i}`} className="list-none">
+                      <div className="px-4 py-2">
+                        <BannerAd slotKey="home-in-feed" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-in-feed') : 3} />
+                      </div>
+                    </li>
+                  )
+                }
+                nodes.push(
+                  <PostCard
                     key={post.id}
                     post={post}
                     user={user}
                     commentCount={commentCounts[post.id] ?? 0}
                     reactionCount={reactionCounts[post.id] ?? 0}
                     postMedia={postMedia[post.id]}
+                    postFakeViews={postFakeViews}
                     anonName={anonMap[post.user_id] ?? '익명'}
                     avatarUrl={avatarMap[post.user_id]}
                     avatarColorClass={avatarColorMap[post.user_id]}
+                    tierLabel={tierByUser[post.user_id]?.name ?? null}
+                    tierBadgeColor={tierByUser[post.user_id]?.badge_color ?? null}
+                    bestCommentPreview={bestCommentByPost[post.id]}
+                    isLunchWinner={lunchWinnerUserIds.has(post.user_id)}
+                    lunchWinCount={lunchWinCountByUserId[post.user_id]}
+                    pollData={pollByPostId[post.id]}
+                    proconData={proconByPostId[post.id]}
                   />
-                ))}
-              </ul>
-              <SectionDivider />
-            </section>
-          )}
-          <section className="pt-2 pb-4" aria-label="최신 글">
-              <h2 className="px-4 text-sm font-semibold text-foreground mb-3">방금 올라온 글</h2>
-            <ul>
-              {latestPosts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  user={user}
-                  commentCount={commentCounts[post.id] ?? 0}
-                  reactionCount={reactionCounts[post.id] ?? 0}
-                  postMedia={postMedia[post.id]}
-                  postFakeViews={postFakeViews}
-                  anonName={anonMap[post.user_id] ?? '익명'}
-                  avatarUrl={avatarMap[post.user_id]}
-                  avatarColorClass={avatarColorMap[post.user_id]}
-                  tierLabel={tierByUser[post.user_id]?.name ?? null}
-                  tierBadgeColor={tierByUser[post.user_id]?.badge_color ?? null}
-                  bestCommentPreview={bestCommentByPost[post.id]}
-                />
-              ))}
+                )
+                return nodes
+              })}
             </ul>
-          </section>
-        </>
+          )}
+        </section>
       )}
 
       <div ref={sentinelRef} className="min-h-12 flex items-center justify-center py-4">
@@ -1041,15 +1509,19 @@ export default function HomePage() {
         )}
       </div>
 
+      <div className="fixed bottom-14 left-0 right-0 max-w-[600px] mx-auto z-10 px-4 pointer-events-none [&_a]:pointer-events-auto">
+        <BannerAd slotKey="home-bottom-sticky" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-bottom-sticky') : 3} />
+      </div>
+
       {notification && notificationsEnabled && (
         <div
           key={notificationKey}
           className="fixed bottom-20 left-4 right-4 max-w-[568px] mx-auto z-20 animate-in fade-in slide-in-from-bottom-2 duration-300 flex items-center gap-3 rounded-full border border-border bg-background/95 backdrop-blur shadow-lg overflow-hidden py-2 pl-2 pr-1"
         >
-          <div className={`shrink-0 size-9 rounded-full flex items-center justify-center text-base overflow-visible ${!notification.actorAvatarUrl ? (notification.actorAvatarColorClass || (notification.actorUserId ? userAvatarColor(notification.actorUserId) : userAvatarColor(notification.postId))) : 'relative'}`}>
+          <div className={`shrink-0 size-9 rounded-full flex items-center justify-center text-base overflow-visible ${!notification.actorAvatarUrl ? (notification.actorAvatarColorClass || (notification.actorUserId ? getAvatarColorClass(null, notification.actorUserId) : getAvatarColorClass(null, notification.postId))) : 'relative'}`}>
             {notification.actorAvatarUrl ? (
               <>
-                <div className={`absolute inset-0 rounded-full ${notification.actorAvatarColorClass || (notification.actorUserId ? userAvatarColor(notification.actorUserId) : userAvatarColor(notification.postId))}`} aria-hidden />
+                <div className={`absolute inset-0 rounded-full ${notification.actorAvatarColorClass || (notification.actorUserId ? getAvatarColorClass(null, notification.actorUserId) : getAvatarColorClass(null, notification.postId))}`} aria-hidden />
                 <div className="relative size-7 rounded-full overflow-hidden bg-background ring-2 ring-background">
                   <Image src={notification.actorAvatarUrl} alt="" width={28} height={28} className="w-full h-full object-cover" />
                 </div>
@@ -1078,6 +1550,16 @@ export default function HomePage() {
                 <span className="font-medium text-foreground">{notification.anonName}</span>님이 {notification.reactionEmoji} 표시를 했습니다
               </p>
             )}
+            {notification.type === 'poll_vote' && (
+              <p className="text-sm text-muted-foreground truncate">
+                <span className="font-medium text-foreground">{notification.anonName}</span>님이 {notification.titleSnippet ? <><span className="text-foreground/90">{notification.titleSnippet}</span>에 </> : ''}투표를 택했어요
+              </p>
+            )}
+            {notification.type === 'procon_vote' && (
+              <p className="text-sm text-muted-foreground truncate">
+                <span className="font-medium text-foreground">{notification.anonName}</span>님이 {notification.titleSnippet ? <><span className="text-foreground/90">{notification.titleSnippet}</span>에 </> : ''}{notification.proconSide === 'pro' ? '찬성' : '반대'}를 택했어요
+              </p>
+            )}
           </Link>
           <button
             type="button"
@@ -1104,15 +1586,15 @@ export default function HomePage() {
         </div>
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-20 max-w-[600px] mx-auto border-t border-border bg-background/95 backdrop-blur safe-area-pb" aria-label="Bottom menu">
+      <nav className="fixed bottom-0 left-0 right-0 z-20 max-w-[600px] mx-auto bg-background/95 backdrop-blur safe-area-pb shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.25)]" aria-label="Bottom menu">
         <div className="flex items-center justify-around h-14 px-2">
           <Link href="/" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground" aria-label="Home">
             <Home className="size-5" />
             <span className="text-[10px]">홈</span>
           </Link>
-          <Link href="/#trending" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground" aria-label="Trending">
-            <Flame className="size-5" />
-            <span className="text-[10px]">인기</span>
+          <Link href="/#lunch" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground" aria-label="점메추">
+            <span className="size-5 flex items-center justify-center text-base" aria-hidden>🍱</span>
+            <span className="text-[10px]">점메추</span>
           </Link>
           <button
             type="button"
@@ -1122,17 +1604,22 @@ export default function HomePage() {
           >
             <Plus className="size-7 stroke-[2.5]" />
           </button>
-          <Link href="/#notifications" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground relative" aria-label="Notifications">
+          <Link href="/notifications" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground relative" aria-label="Notifications">
             <Bell className="size-5" />
             <span className="text-[10px]">알림</span>
-            {notification && <span className="absolute top-1 right-1/4 size-2 rounded-full bg-destructive" />}
+            {notification && (
+              <span className="absolute top-0.5 right-0 flex size-2">
+                <span className="absolute inline-flex size-full rounded-full bg-destructive opacity-75 animate-ping" aria-hidden />
+                <span className="relative inline-flex size-2 rounded-full bg-destructive" aria-hidden />
+              </span>
+            )}
           </Link>
           {user ? (
             <Link href="/profile" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground min-w-[3rem]" aria-label="Profile">
-              <span className={`size-8 rounded-full flex items-center justify-center text-base overflow-visible shrink-0 ${!headerAvatarUrl ? (headerAvatarColorClass || userAvatarColor(user.id)) : 'relative'}`}>
+              <span className={`size-8 rounded-full flex items-center justify-center text-base overflow-visible shrink-0 ${!headerAvatarUrl ? (headerAvatarColorClass || getAvatarColorClass(null, user.id)) : 'relative'}`}>
                 {headerAvatarUrl ? (
                   <>
-                    <div className={`absolute inset-0 rounded-full ${headerAvatarColorClass || userAvatarColor(user.id)}`} aria-hidden />
+                    <div className={`absolute inset-0 rounded-full ${headerAvatarColorClass || getAvatarColorClass(null, user.id)}`} aria-hidden />
                     <div className="relative size-6 rounded-full overflow-hidden bg-background ring-2 ring-background">
                       <Image src={headerAvatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
                     </div>

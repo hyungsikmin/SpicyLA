@@ -40,6 +40,10 @@ Supabase **SQL Editor**에서 아래 파일 내용 전체를 **순서대로** �
 
 버킷 생성 후 **RLS 정책**이 필요합니다. SQL Editor에서 `supabase/migrations/20250203300000_fix_rls_post_media_storage.sql` 내용을 실행하세요. (이미지 업로드 시 "new row violates row-level security policy"가 나오면 이 파일을 실행하면 됩니다.)
 
+## Pre-launch checks
+
+배포 전 점검은 [docs/PRE_LAUNCH_CHECKLIST.md](docs/PRE_LAUNCH_CHECKLIST.md)를 사용하세요. 자동 검증(`npm run lint`, `npm run typecheck`, `npm run build`)과 수동 체크리스트, E2E 스모크 테스트 안내가 있습니다. E2E는 최초 1회 `npx playwright install` 후 `npm run test:e2e`로 실행합니다.
+
 ## Getting Started
 
 First, run the development server:

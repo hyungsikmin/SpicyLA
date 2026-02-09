@@ -9,12 +9,15 @@ import AuthorMenu from './AuthorMenu'
 import ReactionButtons, { type CountsByType, type ReactionType } from './ReactionButtons'
 import ShareButton from './ShareButton'
 import RelativeTime from '@/components/RelativeTime'
+import PollBlock, { type PollData } from '@/components/PollBlock'
+import ProconBar from '@/components/ProconBar'
 import Image from 'next/image'
 import { createSupabaseServer } from '@/lib/supabaseServer'
 import { getPostImageUrl, getAvatarUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
-import { userAvatarEmoji, userAvatarColor } from '@/lib/postAvatar'
+import { userAvatarEmoji } from '@/lib/postAvatar'
 import { Button } from '@/components/ui/button'
+import BannerAd from '@/components/BannerAd'
 
 export async function submitComment(
   postId: string,
@@ -220,6 +223,13 @@ export default async function PostPage({
     else if (typeof v === 'string' && /^-?\d+$/.test(v)) settingsMap.set(row.key, parseInt(v, 10))
   })
   const bestCommentMinLikes = settingsMap.get('best_comment_min_likes') ?? 1
+  let bannerRotationSeconds = 3
+  const postRotationRow = (settingsRows ?? []).find((r: { key: string }) => r.key === 'banner_rotation:post-below-content') as { value_json: unknown } | undefined
+  if (postRotationRow) {
+    const v = postRotationRow.value_json
+    if (typeof v === 'number' && Number.isFinite(v)) bannerRotationSeconds = v
+    else if (typeof v === 'string' && /^\d+$/.test(v)) bannerRotationSeconds = parseInt(v, 10)
+  }
 
   const userIds = new Set<string>([post.user_id])
   commentsFiltered.forEach((c) => userIds.add(c.user_id))
@@ -271,6 +281,45 @@ export default async function PostPage({
     .map((r) => (r as { reaction_type?: string }).reaction_type ?? 'chili')
     .filter((t): t is ReactionType => reactionTypes.includes(t as ReactionType))
 
+  const { data: pollRow } = await supabase
+    .from('post_polls')
+    .select('id, post_id, question, option_1, option_2, option_3, option_4, ends_at')
+    .eq('post_id', id)
+    .maybeSingle()
+  let pollData: PollData | null = pollRow ? (pollRow as PollData) : null
+  let pollCounts = [0, 0, 0, 0]
+  let pollUserVoteIndex: number | null = null
+  if (pollRow) {
+    const { data: votes } = await supabase
+      .from('post_poll_votes')
+      .select('option_index, user_id')
+      .eq('post_id', id)
+    ;(votes ?? []).forEach((v: { option_index: number; user_id: string }) => {
+      if (v.option_index >= 0 && v.option_index <= 3) pollCounts[v.option_index]++
+      if (v.user_id === user?.id) pollUserVoteIndex = v.option_index
+    })
+  }
+
+  const { data: proconRow } = await supabase
+    .from('post_procon')
+    .select('id, post_id')
+    .eq('post_id', id)
+    .maybeSingle()
+  let proconProCount = 0
+  let proconConCount = 0
+  let proconUserVote: 'pro' | 'con' | null = null
+  if (proconRow) {
+    const { data: proconVotes } = await supabase
+      .from('post_procon_votes')
+      .select('side, user_id')
+      .eq('post_id', id)
+    ;(proconVotes ?? []).forEach((v: { side: string; user_id: string }) => {
+      if (v.side === 'pro') proconProCount++
+      else if (v.side === 'con') proconConCount++
+      if (v.user_id === user?.id) proconUserVote = v.side as 'pro' | 'con'
+    })
+  }
+
   const isOwner = !!(user && user.id === post.user_id)
   const commentCount = commentsFiltered.length
 
@@ -292,10 +341,10 @@ export default async function PostPage({
               currentUserId={user?.id}
             >
               <div className="flex gap-3 items-center min-w-0">
-                <div className={`shrink-0 size-10 rounded-full flex items-center justify-center text-lg overflow-visible ${!avatarMap[post.user_id] ? avatarColorMap[post.user_id] ?? userAvatarColor(post.user_id) : 'relative'}`}>
+                <div className={`shrink-0 size-10 rounded-full flex items-center justify-center text-lg overflow-visible ${!avatarMap[post.user_id] ? avatarColorMap[post.user_id] ?? getAvatarColorClass(null, post.user_id) : 'relative'}`}>
                   {avatarMap[post.user_id] ? (
                     <>
-                      <div className={`absolute inset-0 rounded-full ${avatarColorMap[post.user_id] ?? userAvatarColor(post.user_id)}`} aria-hidden />
+                      <div className={`absolute inset-0 rounded-full ${avatarColorMap[post.user_id] ?? getAvatarColorClass(null, post.user_id)}`} aria-hidden />
                       <div className="relative size-8 rounded-full overflow-hidden bg-background ring-2 ring-background">
                         <Image src={avatarMap[post.user_id]} alt="" width={32} height={32} className="w-full h-full object-cover" />
                       </div>
@@ -335,6 +384,29 @@ export default async function PostPage({
             <p className="text-[15px] leading-snug text-foreground/95 mt-2 whitespace-pre-line">
               {post.body}
             </p>
+            {pollData && (
+              <PollBlock
+                poll={pollData}
+                counts={pollCounts}
+                userVoteIndex={pollUserVoteIndex}
+                postUserId={post.user_id}
+                currentUserId={user?.id ?? null}
+              />
+            )}
+            {proconRow && (
+              <>
+                <p id="procon-question" className="text-sm font-medium text-foreground mb-2 mt-3">
+                  {(post.title ?? '').trim() || '이 글에 대한 의견'}
+                </p>
+                <ProconBar
+                  postId={id}
+                  proCount={proconProCount}
+                  conCount={proconConCount}
+                  userVote={proconUserVote}
+                  currentUserId={user?.id ?? null}
+                />
+              </>
+            )}
             {media && media.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-3">
                 {media.map((m) => (
@@ -385,6 +457,10 @@ export default async function PostPage({
       </article>
 
       <div className="h-2 w-full bg-muted border-0 shrink-0" role="presentation" aria-hidden />
+
+      <div className="px-4 py-2">
+        <BannerAd slotKey="post-below-content" rotationIntervalSeconds={bannerRotationSeconds} />
+      </div>
 
       <section className="border-b border-border">
         <div className="px-4 py-3 border-b border-border/50">

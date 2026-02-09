@@ -1,5 +1,6 @@
 'use client'
 
+import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -8,6 +9,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { userAvatarEmoji } from '@/lib/postAvatar'
 import { getAvatarUrl } from '@/lib/storage'
 import { fetchTiers, resolveTier, type Tier } from '@/lib/siteSettings'
+import { getLunchWinCount } from '@/lib/lunch'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, Moon, Bell, Flame, Eye, MessageCircle, Shield, LogOut } from 'lucide-react'
 
@@ -31,11 +33,12 @@ type Profile = {
   status: string | null
   profile_color_index: number | null
   avatar_path: string | null
+  lunch_winner_at: string | null
 }
 
 export default function ProfilePage() {
   const router = useRouter()
-  const [user, setUser] = useState<{ id: string } | null>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [postsCount, setPostsCount] = useState(0)
   const [commentsCount, setCommentsCount] = useState(0)
@@ -46,6 +49,7 @@ export default function ProfilePage() {
   const [spicyOnly, setSpicyOnly] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [tiers, setTiers] = useState<Tier[]>([])
+  const [lunchWinCount, setLunchWinCount] = useState<number>(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -66,7 +70,7 @@ export default function ProfilePage() {
     if (!user) return
     const load = async () => {
       const [profileRes, postsRes, commentsRes, reactionsRes] = await Promise.all([
-        supabase.from('profiles').select('anon_name, status, profile_color_index, avatar_path').eq('user_id', user.id).maybeSingle(),
+        supabase.from('profiles').select('anon_name, status, profile_color_index, avatar_path, lunch_winner_at').eq('user_id', user.id).maybeSingle(),
         supabase.from('posts').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         supabase.from('comments').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         (async () => {
@@ -81,7 +85,7 @@ export default function ProfilePage() {
       if (!profileData) {
         const anon = generateAnonName()
         await supabase.from('profiles').insert({ user_id: user.id, anon_name: anon })
-        const { data: refetched } = await supabase.from('profiles').select('anon_name, status, profile_color_index, avatar_path').eq('user_id', user.id).single()
+        const { data: refetched } = await supabase.from('profiles').select('anon_name, status, profile_color_index, avatar_path, lunch_winner_at').eq('user_id', user.id).single()
         profileData = refetched as Profile
       } else if (!profileData.anon_name?.trim()) {
         const anon = generateAnonName()
@@ -92,6 +96,7 @@ export default function ProfilePage() {
       setPostsCount(postsRes.count ?? 0)
       setCommentsCount(commentsRes.count ?? 0)
       setSpicyCount(typeof (reactionsRes as { count?: number }).count === 'number' ? (reactionsRes as { count: number }).count : 0)
+      getLunchWinCount(user.id).then(setLunchWinCount)
       setLoading(false)
     }
     load()
@@ -251,6 +256,11 @@ export default function ProfilePage() {
               {currentTier.name}
             </span>
           )}
+          {(profile?.lunch_winner_at === new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) || lunchWinCount > 0) && (
+            <span className="rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-semibold px-2.5 py-1 border border-amber-500/40">
+              🍱 {profile?.lunch_winner_at === new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) ? '오늘의 점메추왕' : `${lunchWinCount}회 점메추왕`}
+            </span>
+          )}
           <div className="flex gap-2 flex-wrap justify-center items-center">
             {AVATAR_COLORS.map((c, i) => (
               <button
@@ -300,6 +310,12 @@ export default function ProfilePage() {
       <section className="px-4 border-t border-border pt-4">
         <h2 className="text-sm font-semibold text-muted-foreground px-1 mb-3">설정</h2>
         <div className="rounded-xl border border-border divide-y divide-border">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <span className="text-sm font-medium text-muted-foreground shrink-0">연결된 계정</span>
+            <span className="flex-1 text-sm text-foreground truncate" title={user.email ?? undefined}>
+              {user.email ? `Google (${user.email})` : 'Google'}
+            </span>
+          </div>
           <button type="button" onClick={toggleDark} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors">
             <Moon className="size-5 text-muted-foreground shrink-0" />
             <span className="flex-1 text-sm font-medium">다크 모드</span>
