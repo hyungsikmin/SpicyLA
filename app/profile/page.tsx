@@ -197,7 +197,7 @@ export default function ProfilePage() {
       anon_name: profile?.anon_name?.trim() || generateAnonName(),
     }
     await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' })
-    setProfile((p) => (p ? { ...p, profile_color_index: i } : { ...payload, status: null, avatar_path: null }))
+    setProfile((p) => (p ? { ...p, profile_color_index: i } : { ...payload, status: null, avatar_path: null, lunch_winner_at: null }))
   }
 
   if (loading || !user) {
