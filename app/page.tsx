@@ -19,6 +19,7 @@ import LunchSection from '@/components/LunchSection'
 import PollBlock, { type PollData } from '@/components/PollBlock'
 import ProconBar from '@/components/ProconBar'
 import BannerAd from '@/components/BannerAd'
+import { getSwitchSeedAccountLink } from '@/app/actions/switchSeedAccount'
 
 type Post = {
   id: string
@@ -1615,21 +1616,48 @@ export default function HomePage() {
             )}
           </Link>
           {user ? (
-            <Link href="/profile" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground min-w-[3rem]" aria-label="Profile">
-              <span className={`size-8 rounded-full flex items-center justify-center text-base overflow-visible shrink-0 ${!headerAvatarUrl ? (headerAvatarColorClass || getAvatarColorClass(null, user.id)) : 'relative'}`}>
-                {headerAvatarUrl ? (
-                  <>
-                    <div className={`absolute inset-0 rounded-full ${headerAvatarColorClass || getAvatarColorClass(null, user.id)}`} aria-hidden />
-                    <div className="relative size-6 rounded-full overflow-hidden bg-background ring-2 ring-background">
-                      <Image src={headerAvatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
-                    </div>
-                  </>
-                ) : (
-                  userAvatarEmoji(user.id)
-                )}
-              </span>
-              <span className="text-[10px]">프로필</span>
-            </Link>
+            /^a\d+@gmail\.com$/i.test(user.email ?? '') ? (
+              <div className="flex flex-col items-center gap-0.5 py-2 min-w-[3rem]">
+                <select
+                  className="text-[10px] font-medium text-muted-foreground hover:text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--spicy)]"
+                  value={(user.email ?? '').toLowerCase()}
+                  aria-label="시드 계정 전환"
+                  onChange={async (e) => {
+                    const email = e.target.value
+                    if (!email || email === user.email) return
+                    const { url, error } = await getSwitchSeedAccountLink(email, typeof window !== 'undefined' ? window.location.origin : undefined)
+                    if (error) {
+                      alert(error)
+                      return
+                    }
+                    if (url) window.location.href = url
+                  }}
+                >
+                  {Array.from({ length: 100 }, (_, i) => {
+                    const n = i + 1
+                    const em = `a${n}@gmail.com`
+                    return <option key={em} value={em}>a{n}</option>
+                  })}
+                </select>
+                <span className="text-[10px] text-muted-foreground">계정</span>
+              </div>
+            ) : (
+              <Link href="/profile" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground min-w-[3rem]" aria-label="Profile">
+                <span className={`size-8 rounded-full flex items-center justify-center text-base overflow-visible shrink-0 ${!headerAvatarUrl ? (headerAvatarColorClass || getAvatarColorClass(null, user.id)) : 'relative'}`}>
+                  {headerAvatarUrl ? (
+                    <>
+                      <div className={`absolute inset-0 rounded-full ${headerAvatarColorClass || getAvatarColorClass(null, user.id)}`} aria-hidden />
+                      <div className="relative size-6 rounded-full overflow-hidden bg-background ring-2 ring-background">
+                        <Image src={headerAvatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
+                      </div>
+                    </>
+                  ) : (
+                    userAvatarEmoji(user.id)
+                  )}
+                </span>
+                <span className="text-[10px]">프로필</span>
+              </Link>
+            )
           ) : (
             <Link href="/login" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground" aria-label="Login">
               <UserIcon className="size-5" />
