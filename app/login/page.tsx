@@ -3,6 +3,7 @@
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import { Suspense } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,7 @@ function generateAnonName() {
   return `익명${num}`
 }
 
-export default function LoginPage() {
+function LoginContent() {
   const searchParams = useSearchParams()
   const from = searchParams.get('from') || '/'
   const [loading, setLoading] = useState(false)
@@ -110,5 +111,22 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </main>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen flex items-center justify-center p-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl">아니스비 로그인</CardTitle>
+            <CardDescription>로딩 중…</CardDescription>
+          </CardHeader>
+        </Card>
+      </main>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }
