@@ -54,7 +54,7 @@ export default function ProfileEditPage() {
     }
     debounceRef.current = setTimeout(async () => {
       debounceRef.current = null
-      const nameToCheck = trimmed.slice(0, 8)
+      const nameToCheck = trimmed.slice(0, 10)
       const { data: existing } = await supabase
         .from('profiles')
         .select('user_id')
@@ -93,7 +93,7 @@ export default function ProfileEditPage() {
       }
     }
     const updates: { anon_name?: string; status?: string } = {}
-    if (tab === 'name' || tab !== 'status') updates.anon_name = trimmedName.slice(0, 8) || undefined
+    if (tab === 'name' || tab !== 'status') updates.anon_name = trimmedName.slice(0, 10) || undefined
     if (tab === 'status' || tab !== 'name') updates.status = status.trim() || undefined
     const { error: e } = await supabase.from('profiles').update(updates).eq('user_id', user.id)
     setSaving(false)
@@ -128,11 +128,11 @@ export default function ProfileEditPage() {
             value={anonName}
             onChange={(e) => setAnonName(e.target.value)}
             placeholder="익명1234"
-            maxLength={8}
+            maxLength={10}
             className="rounded-xl"
           />
           <p className={`text-xs ${duplicateError ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
-            {duplicateError ? '이미 사용 중인 아이디예요.' : '다른 사람에게 보이는 이름이에요. 최대 8글자. 예: 익명1002'}
+            {duplicateError ? '이미 사용 중인 아이디예요.' : '다른 사람에게 보이는 이름이에요. 최대 10글자. 예: 익명1002'}
           </p>
         </div>
         <div className="space-y-2">

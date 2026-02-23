@@ -12,6 +12,8 @@ export default function ProconBar({
   userVote,
   currentUserId,
   compact,
+  proLabel = '찬',
+  conLabel = '반',
 }: {
   postId: string
   proCount: number
@@ -19,6 +21,8 @@ export default function ProconBar({
   userVote: 'pro' | 'con' | null
   currentUserId: string | null
   compact?: boolean
+  proLabel?: string
+  conLabel?: string
 }) {
   const router = useRouter()
   const [voting, setVoting] = useState(false)
@@ -70,25 +74,25 @@ export default function ProconBar({
           <div
             className={`flex rounded-full overflow-hidden border border-border bg-muted ${compact ? 'h-6' : 'h-8'}`}
             role="img"
-            aria-label={`찬 ${proPct}%, 반 ${conPct}%`}
+            aria-label={`${proLabel} ${proPct}%, ${conLabel} ${conPct}%`}
           >
             <div
               className="flex items-center justify-center text-xs font-medium bg-emerald-500/80 text-white"
               style={{ width: `${proPct}%` }}
             >
-              {proPct > 15 ? `찬 ${proPct}%` : ''}
+              {proPct > 15 ? `${proLabel} ${proPct}%` : ''}
             </div>
             <div
               className="flex items-center justify-center text-xs font-medium bg-red-500/80 text-white"
               style={{ width: `${conPct}%` }}
             >
-              {conPct > 15 ? `반 ${conPct}%` : ''}
+              {conPct > 15 ? `${conLabel} ${conPct}%` : ''}
             </div>
           </div>
           <p className={`text-xs text-muted-foreground ${compact ? 'mt-1' : 'mt-1.5'}`}>
-            찬 {proCount} · 반 {conCount}
+            {proLabel} {proCount} · {conLabel} {conCount}
             {effectiveVote && (
-              <span className="ml-1">(내 선택: {effectiveVote === 'pro' ? '찬' : '반'})</span>
+              <span className="ml-1">(내 선택: {effectiveVote === 'pro' ? proLabel : conLabel})</span>
             )}
           </p>
         </>
@@ -100,9 +104,9 @@ export default function ProconBar({
             className={`flex-1 bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 ${compact ? 'text-xs py-1.5 h-auto' : ''}`}
             disabled={!currentUserId || voting}
             onClick={() => handleVote('pro')}
-            aria-label="찬에 투표"
+            aria-label={`${proLabel}에 투표`}
           >
-            찬
+            {proLabel}
           </Button>
           <Button
             type="button"
@@ -110,9 +114,9 @@ export default function ProconBar({
             className={`flex-1 bg-red-500/10 border-red-500/40 text-red-600 dark:text-red-400 ${compact ? 'text-xs py-1.5 h-auto' : ''}`}
             disabled={!currentUserId || voting}
             onClick={() => handleVote('con')}
-            aria-label="반에 투표"
+            aria-label={`${conLabel}에 투표`}
           >
-            반
+            {conLabel}
           </Button>
         </div>
       )}

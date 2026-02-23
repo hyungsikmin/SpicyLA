@@ -3,11 +3,12 @@
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
-import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink, ChevronRight } from 'lucide-react'
+import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import { getPostImageUrl, getAvatarUrl, getBusinessSpotlightMediaUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 import { userAvatarEmoji } from '@/lib/postAvatar'
@@ -33,19 +34,23 @@ type Post = {
 
 const PAGE_SIZE = 10
 const DEFAULT_TRENDING_MIN = 10
-const DEFAULT_TRENDING_MAX = 3
+const DEFAULT_TRENDING_MAX = 10
 const DEFAULT_BEST_COMMENT_MIN_LIKES = 1
 const DEFAULT_SEOLJJANGI_MIN_POSTS = 2
 
 const FILTERS = [
   { id: 'all', label: '전체', icon: '📋' },
   { id: 'story', label: '썰', icon: '🔥' },
-  { id: 'work', label: '일', icon: '💻' },
+  { id: 'love', label: '럽', icon: '❣️' },
   { id: 'eat', label: '먹', icon: '🍴' },
+  { id: 'work', label: '일', icon: '💻' },
+  { id: 'money', label: '돈', icon: '💰' },
   { id: 'home', label: '집', icon: '🏠' },
+  { id: 'travel', label: '여', icon: '🏝️' },
+  { id: 'question', label: '질', icon: '⁉️' },
 ] as const
-/** 피드·4칼럼 공통 순서: 썰-먹-일-집 */
-const FILTER_ORDER: (typeof FILTERS)[number]['id'][] = ['all', 'story', 'eat', 'work', 'home']
+/** 피드·4칼럼 공통 순서: 전체-썰-럽-먹-일-돈-집-여-질 */
+const FILTER_ORDER: (typeof FILTERS)[number]['id'][] = ['all', 'story', 'love', 'eat', 'work', 'money', 'home', 'travel', 'question']
 const REACTION_EMOJI: Record<string, string> = {
   laugh: '🤣', angry: '😡', mindblown: '🤯', eyes: '👀', chili: '🌶️',
 }
@@ -92,6 +97,30 @@ function PostCardSkeleton() {
   )
 }
 
+/** 스켈레톤: 인기 글 2칼럼 그리드 형태 */
+function TrendingSectionSkeleton() {
+  return (
+    <div className="flex gap-4 animate-pulse" aria-hidden>
+      {[0, 1].map((col) => (
+        <div key={col} className="flex-1 min-w-0 basis-0 flex flex-col gap-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl border border-border bg-card overflow-hidden p-3 space-y-2">
+              <div className="flex gap-2">
+                <div className="shrink-0 size-8 rounded-full bg-muted" />
+                <div className="flex-1 space-y-1 min-w-0">
+                  <div className="h-3 bg-muted rounded w-16" />
+                  <div className="h-4 bg-muted rounded w-full max-w-[85%]" />
+                </div>
+              </div>
+              <div className="h-3 bg-muted rounded w-12" />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function NotificationBubble({
   type, postId, anonName, commentSnippet, reactionEmoji, onDismiss,
 }: {
@@ -131,9 +160,25 @@ function AnimateInView({ children, className }: { children: ReactNode; className
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const obs = new IntersectionObserver(([e]) => e?.isIntersecting && setVisible(true), { rootMargin: '40px', threshold: 0 })
+    const setVisibleOnce = () => setVisible(true)
+    const obs = new IntersectionObserver(([e]) => e?.isIntersecting && setVisibleOnce(), { rootMargin: '120px', threshold: 0 })
     obs.observe(el)
-    return () => obs.disconnect()
+    let cancelled = false
+    const fallback = () => {
+      if (cancelled || !el.isConnected) return
+      requestAnimationFrame(() => {
+        if (cancelled || !el.isConnected) return
+        const rect = el.getBoundingClientRect()
+        const inView = rect.top < (typeof window !== 'undefined' ? window.innerHeight : 0) + 100 && rect.bottom > -100
+        if (inView) setVisibleOnce()
+      })
+    }
+    const t = setTimeout(fallback, 150)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+      obs.disconnect()
+    }
   }, [])
   return (
     <div ref={ref} className={`transition-all duration-500 ease-out ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'} ${className ?? ''}`}>
@@ -143,7 +188,7 @@ function AnimateInView({ children, className }: { children: ReactNode; className
 }
 
 function PostCard({
-  post, user, commentCount, reactionCount, postMedia, postFakeViews, anonName, avatarUrl, avatarColorClass, tierLabel, tierBadgeColor, bestCommentPreview, isLunchWinner, lunchWinCount, pollData, proconData,
+  post, user, commentCount, reactionCount, postMedia, postFakeViews, anonName, avatarUrl, avatarColorClass, tierLabel, tierBadgeColor, bestCommentPreview, isLunchWinner, lunchWinCount, pollData, proconData, isAdminAuthor,
 }: {
   post: Post
   user: User | null
@@ -160,7 +205,8 @@ function PostCard({
   isLunchWinner?: boolean
   lunchWinCount?: number
   pollData?: { poll: PollData; counts: number[]; userVoteIndex: number | null } | null
-  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null } | null
+  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel?: string; conLabel?: string } | null
+  isAdminAuthor?: boolean
 }) {
   const fakeViews = postFakeViews(post.id, commentCount, reactionCount)
   const colorClass = avatarColorClass ?? getAvatarColorClass(null, post.user_id)
@@ -181,14 +227,18 @@ function PostCard({
                 userAvatarEmoji(post.user_id)
               )}
             </div>
-            {tierLabel && (
+            {isAdminAuthor ? (
+              <span className="rounded-full bg-red-500/20 text-red-500 dark:text-red-400 text-[10px] font-semibold px-1.5 py-0.5 border border-red-500/40 whitespace-nowrap">
+                관리자
+              </span>
+            ) : tierLabel ? (
               <span
                 className={!tierBadgeColor ? 'rounded-full bg-[var(--spicy)]/20 text-[var(--spicy)] text-[10px] font-semibold px-1.5 py-0.5 border border-[var(--spicy)]/40 whitespace-nowrap' : 'rounded-full text-[10px] font-semibold px-1.5 py-0.5 border whitespace-nowrap'}
                 style={tierBadgeColor ? { color: tierBadgeColor, backgroundColor: tierBadgeColor + '20', borderColor: tierBadgeColor + '40' } : undefined}
               >
                 {tierLabel}
               </span>
-            )}
+            ) : null}
             {lunchWinCount != null && lunchWinCount > 0 && (
               <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-0.5" title="점메추 명예의 전당">
                 🏆 {lunchWinCount}
@@ -197,7 +247,7 @@ function PostCard({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-1.5 flex-wrap w-full">
-              <span className="font-semibold text-sm">{anonName}</span>
+              <span className={`font-semibold text-sm ${isAdminAuthor ? 'text-red-500 dark:text-red-400 font-bold' : ''}`}>{anonName}</span>
               <span className="text-muted-foreground text-sm">·</span>
               <RelativeTime date={post.created_at} />
               {post.category && (() => {
@@ -243,7 +293,7 @@ function PostCard({
             )}
             {proconData && (
               <div className="mt-2" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
-                <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact />
+                <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact proLabel={proconData.proLabel} conLabel={proconData.conLabel} />
               </div>
             )}
             {postMedia && postMedia.length > 0 && (
@@ -283,7 +333,7 @@ function PostCard({
 }
 
 function PostGridCard({
-  post, user, commentCount, reactionCount, postMedia, anonName, avatarUrl, avatarColorClass, isLunchWinner, lunchWinCount, pollData, proconData,
+  post, user, commentCount, reactionCount, postMedia, anonName, avatarUrl, avatarColorClass, isLunchWinner, lunchWinCount, pollData, proconData, compactTrending, chatStyle, isLeft, isAdminAuthor,
 }: {
   post: Post
   user: User | null
@@ -296,7 +346,14 @@ function PostGridCard({
   isLunchWinner?: boolean
   lunchWinCount?: number
   pollData?: { poll: PollData; counts: number[]; userVoteIndex: number | null } | null
-  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null } | null
+  proconData?: { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel?: string; conLabel?: string } | null
+  /** 많이 본 글용: 투표/찬반 위젯 숨기고 이미지만, 제목 앞에 [투표]/[찬반] 표시 */
+  compactTrending?: boolean
+  /** 채팅 메시지 스타일: 좌우 번갈아 가며 표시 */
+  chatStyle?: boolean
+  /** 채팅 스타일일 때 왼쪽 정렬 여부 */
+  isLeft?: boolean
+  isAdminAuthor?: boolean
 }) {
   const firstMedia = postMedia?.[0]
   const colorClass = avatarColorClass ?? getAvatarColorClass(null, post.user_id)
@@ -304,70 +361,143 @@ function PostGridCard({
   const isSpicyBlur = post.is_spicy && !user
   const categoryFilter = post.category ? FILTERS.find((x) => x.id === post.category) : null
   const categoryLabel = categoryFilter && categoryFilter.id !== 'all' ? categoryFilter.label : null
-  return (
-    <li>
+  const trendingPrefix = compactTrending ? (pollData ? '[투표] ' : proconData ? '[찬반] ' : '') : ''
+  const displayTitle = isSpicyBlur ? '멤버만 공개' : `${trendingPrefix}${titleOrBody}`
+  
+  // 베스트 섹션용 고정 폭 (2칼럼 기준)
+  const cardWidthStyle = compactTrending ? {} : {}
+  
+  // 채팅 스타일 스타일링 - 이미지처럼 부드러운 둥근 모서리와 꼬리
+  const chatCardClasses = chatStyle 
+    ? `flex flex-col border border-border overflow-visible shadow-sm hover:shadow-md transition-shadow block ${isLeft ? 'bg-card' : 'bg-blue-500/10 dark:bg-blue-500/20'} relative`
+    : 'flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow block'
+  
+  // 채팅 스타일일 때 둥근 모서리와 꼬리 스타일
+  const chatBubbleStyle = chatStyle ? {
+    borderRadius: isLeft 
+      ? '16px 16px 16px 4px' // 왼쪽: 상단 둥글게, 하단 왼쪽만 작게 (꼬리 위치)
+      : '16px 16px 4px 16px', // 오른쪽: 상단 둥글게, 하단 오른쪽만 작게 (꼬리 위치)
+  } : {}
+  
+  const cardContent = (
+    <div className={chatStyle ? 'relative pb-3' : ''}>
       <Link
         href={`/p/${post.id}`}
-        className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow block"
+        className={chatCardClasses}
+        style={{ ...cardWidthStyle, ...chatBubbleStyle }}
         aria-label={post.title || '글 보기'}
       >
-        {pollData && (
+        {!compactTrending && pollData && (
           <div className="p-2 shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
             <PollBlock poll={pollData.poll} counts={pollData.counts} userVoteIndex={pollData.userVoteIndex} postUserId={post.user_id} currentUserId={user?.id ?? null} compact />
           </div>
         )}
-        {proconData && (
+        {!compactTrending && proconData && (
           <div className="p-2 shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
-            <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact />
+            <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact proLabel={proconData.proLabel} conLabel={proconData.conLabel} />
           </div>
         )}
-        <div className="relative w-full aspect-[4/3] bg-muted shrink-0">
-          {firstMedia && !isSpicyBlur ? (
+        {/* 채팅 스타일이 아닐 때만 이미지를 위에 크게 표시 */}
+        {!chatStyle && firstMedia && !isSpicyBlur && (
+          <div className={`relative w-full bg-muted shrink-0 ${compactTrending ? 'h-[10rem]' : 'aspect-[4/3]'}`}>
             <Image src={firstMedia} alt="" fill className="object-cover" sizes="(max-width: 600px) 50vw, 284px" />
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-muted-foreground/10 via-muted to-muted-foreground/5" aria-hidden />
-          )}
-          {isSpicyBlur && firstMedia && (
-            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">🔒</div>
-          )}
-        </div>
-        <div className="p-3 flex flex-col gap-2 min-w-0">
-          <div className="flex items-center justify-between gap-2 min-w-0">
-            <p className="text-sm font-medium text-foreground line-clamp-2 leading-snug min-w-0 flex-1">
-              {isSpicyBlur ? '멤버만 공개' : titleOrBody}
-            </p>
-            {categoryLabel && categoryFilter && (
-              <span className="text-xs text-muted-foreground font-medium shrink-0" aria-label={`카테고리: ${categoryLabel}`}>
-                {categoryFilter.icon} {categoryLabel}
-              </span>
-            )}
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-              <div className="flex flex-col items-center gap-0.5">
-                <div className={`size-6 rounded-full flex items-center justify-center text-xs shrink-0 overflow-hidden ${!avatarUrl ? colorClass : ''}`}>
-                  {avatarUrl ? (
-                    <Image src={avatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
-                  ) : (
-                    userAvatarEmoji(post.user_id)
+        )}
+        {!chatStyle && isSpicyBlur && firstMedia && (
+          <div className={`relative w-full bg-muted shrink-0 ${compactTrending ? 'h-[10rem]' : 'aspect-[4/3]'}`}>
+            <div className="absolute inset-0 bg-gradient-to-br from-muted-foreground/10 via-muted to-muted-foreground/5" aria-hidden />
+            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">🔒</div>
+          </div>
+        )}
+        <div className={`p-3 flex flex-col gap-2 min-w-0 ${chatStyle && firstMedia ? 'flex-row items-start gap-3' : ''}`}>
+          <div className="flex-1 min-w-0 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <p className="text-sm font-medium text-foreground line-clamp-1 leading-snug min-w-0 flex-1 truncate">
+                {displayTitle}
+              </p>
+              {categoryLabel && categoryFilter && (
+                <span className="text-xs text-muted-foreground font-medium shrink-0" aria-label={`카테고리: ${categoryLabel}`}>
+                  {categoryFilter.icon} {categoryLabel}
+                </span>
+              )}
+            </div>
+            {chatStyle && post.body && (
+              <p className="text-xs text-muted-foreground line-clamp-1 leading-relaxed">
+                {post.body.replace(/\s+/g, ' ').trim()}
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                <div className="flex flex-col items-center gap-0.5">
+                  <div className={`size-6 rounded-full flex items-center justify-center text-xs shrink-0 overflow-hidden ${!avatarUrl ? colorClass : ''}`}>
+                    {avatarUrl ? (
+                      <Image src={avatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
+                    ) : (
+                      userAvatarEmoji(post.user_id)
+                    )}
+                  </div>
+                  {!compactTrending && lunchWinCount != null && lunchWinCount > 0 && (
+                    <span className="text-[9px] font-semibold text-amber-600 dark:text-amber-400" title="점메추 명예의 전당">🏆{lunchWinCount}</span>
                   )}
                 </div>
-                {lunchWinCount != null && lunchWinCount > 0 && (
-                  <span className="text-[9px] font-semibold text-amber-600 dark:text-amber-400" title="점메추 명예의 전당">🏆{lunchWinCount}</span>
+                {isAdminAuthor && (
+                  <span className="shrink-0 rounded bg-red-500/20 text-red-500 dark:text-red-400 text-[9px] font-semibold px-1 py-0.5 border border-red-500/40">관리자</span>
                 )}
+                <span className={`truncate ${compactTrending ? 'text-[8px]' : 'text-xs'} ${isAdminAuthor ? 'text-red-500 dark:text-red-400 font-bold' : 'text-muted-foreground'}`} style={compactTrending ? { maxWidth: '3rem' } : undefined}>{anonName}</span>
+                {isLunchWinner && <span className="shrink-0 text-[10px] font-semibold text-amber-600 dark:text-amber-400" title="오늘의 점메추왕">🍱</span>}
               </div>
-              <span className="text-xs text-muted-foreground truncate">{anonName}</span>
-              {isLunchWinner && <span className="shrink-0 text-[10px] font-semibold text-amber-600 dark:text-amber-400" title="오늘의 점메추왕">🍱</span>}
-            </div>
-            <div className="flex items-center gap-2 text-muted-foreground text-xs tabular-nums shrink-0">
-              <span className="flex items-center gap-0.5"><MessageCircle className="size-3.5" aria-hidden />{commentCount}</span>
-              <span className="flex items-center gap-0.5 text-red-500 dark:text-red-400 font-medium">🌶️ {reactionCount}</span>
+              <div className={`flex items-center gap-2 text-muted-foreground tabular-nums shrink-0 ${compactTrending ? 'text-[8px]' : 'text-xs'}`}>
+                <span className="flex items-center gap-0.5"><MessageCircle className={compactTrending ? 'size-2.5' : 'size-3.5'} aria-hidden />{commentCount}</span>
+                <span className={`flex items-center gap-0.5 text-red-500 dark:text-red-400 font-medium ${compactTrending ? 'text-[8px]' : ''}`}>🌶️ {reactionCount}</span>
+              </div>
             </div>
           </div>
+          {/* 채팅 스타일일 때 오른쪽에 작은 정방형 이미지 표시 */}
+          {chatStyle && firstMedia && !isSpicyBlur && (
+            <div className="relative size-16 sm:size-20 rounded-lg bg-muted shrink-0 overflow-hidden">
+              <Image src={firstMedia} alt="" fill className="object-cover" sizes="80px" />
+            </div>
+          )}
+          {chatStyle && isSpicyBlur && firstMedia && (
+            <div className="relative size-16 sm:size-20 rounded-lg bg-muted shrink-0 overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-muted-foreground/10 via-muted to-muted-foreground/5" aria-hidden />
+              <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-xs">🔒</div>
+            </div>
+          )}
         </div>
       </Link>
-    </li>
+      {chatStyle && (
+        <div 
+          className={`absolute bottom-0 ${isLeft ? 'left-0' : 'right-0'} pointer-events-none`}
+          style={{
+            [isLeft ? 'left' : 'right']: '0px',
+            bottom: '-6px',
+            width: '12px',
+            height: '12px',
+          }}
+          aria-hidden="true"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            className={`${isLeft ? 'scale-x-[-1]' : ''}`}
+            style={{
+              filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1))',
+            }}
+          >
+            <path
+              d="M0 0 L12 0 Q12 6 6 12 Q0 6 0 0 Z"
+              fill={isLeft ? 'hsl(var(--card))' : 'rgba(59, 130, 246, 0.1)'}
+              className={isLeft ? '' : 'dark:fill-blue-500/20'}
+            />
+          </svg>
+        </div>
+      )}
+    </div>
   )
+  // masonry 레이아웃에서는 li 태그 없이 사용
+  return cardContent
 }
 
 function SpotlightPollCard({
@@ -378,6 +508,31 @@ function SpotlightPollCard({
   user: User | null
 }) {
   const { post, poll, counts, userVoteIndex } = spotlight
+  const ended = poll.ends_at ? new Date(poll.ends_at) <= new Date() : false
+  const [timeLeft, setTimeLeft] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!poll.ends_at || ended) {
+      setTimeLeft(null)
+      return
+    }
+    const update = () => {
+      const deadline = new Date(poll.ends_at!).getTime()
+      const now = Date.now()
+      const left = Math.max(0, deadline - now)
+      if (left <= 0) {
+        setTimeLeft(null)
+        return
+      }
+      const h = Math.floor(left / 3600000)
+      const m = Math.floor((left % 3600000) / 60000)
+      setTimeLeft(`${h}:${m.toString().padStart(2, '0')}`)
+    }
+    update()
+    const t = setInterval(update, 1000)
+    return () => clearInterval(t)
+  }, [poll.ends_at, ended])
+
   return (
     <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm p-2">
       <div
@@ -393,12 +548,25 @@ function SpotlightPollCard({
           compact
         />
       </div>
-      <Link
-        href={`/p/${post.id}`}
-        className="mt-1 text-xs text-muted-foreground hover:text-foreground inline-block"
-      >
-        글 보기 →
-      </Link>
+      <div className="mt-1 flex items-center justify-between">
+        <Link
+          href={`/p/${post.id}`}
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          글 보기 →
+        </Link>
+        {poll.ends_at && (
+          ended ? (
+            <span className="text-xs font-medium text-red-500 dark:text-red-400 rounded-full px-2 py-0.5 bg-red-500/10 border border-red-500/30">
+              마감
+            </span>
+          ) : timeLeft ? (
+            <span className="text-xs text-muted-foreground">
+              {timeLeft}
+            </span>
+          ) : null
+        )}
+      </div>
     </div>
   )
 }
@@ -407,10 +575,10 @@ function SpotlightProconCard({
   spotlight,
   user,
 }: {
-  spotlight: { post: Post; proCount: number; conCount: number; userVote: 'pro' | 'con' | null }
+  spotlight: { post: Post; proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel: string; conLabel: string }
   user: User | null
 }) {
-  const { post, proCount, conCount, userVote } = spotlight
+  const { post, proCount, conCount, userVote, proLabel, conLabel } = spotlight
   const question = (post.title ?? '').trim() || (post.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 50) || '이 글에 대한 의견'
   return (
     <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm p-2">
@@ -426,6 +594,8 @@ function SpotlightProconCard({
           userVote={userVote}
           currentUserId={user?.id ?? null}
           compact
+          proLabel={proLabel}
+          conLabel={conLabel}
         />
       </div>
       <Link
@@ -438,7 +608,9 @@ function SpotlightProconCard({
   )
 }
 
-export default function HomePage() {
+function HomePageInner() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
@@ -448,6 +620,7 @@ export default function HomePage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [fakeLiveCount, setFakeLiveCount] = useState(23)
+  const [fakeTypingCount, setFakeTypingCount] = useState(0)
   const [lunchParticipantCount, setLunchParticipantCount] = useState<number | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
   const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post' | 'poll_vote' | 'procon_vote'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string; proconSide?: 'pro' | 'con' } | null>(null)
@@ -464,8 +637,11 @@ export default function HomePage() {
   const [lunchHallOfFame, setLunchHallOfFame] = useState<HallOfFameEntry[]>([])
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set())
   const [headerAnonName, setHeaderAnonName] = useState<string | null>(null)
+  const [trendingRowsExpanded, setTrendingRowsExpanded] = useState(false)
   const [headerAvatarUrl, setHeaderAvatarUrl] = useState<string | null>(null)
   const [headerAvatarColorClass, setHeaderAvatarColorClass] = useState<string>('')
+  const [recentGlobalAlarms, setRecentGlobalAlarms] = useState<Array<{ postId: string; text: string; created_at: string }>>([])
+  const [buttonScrollIndex, setButtonScrollIndex] = useState(0)
   const [spicyOnly, setSpicyOnly] = useState(() => {
     if (typeof window === 'undefined') return false
     try { return localStorage.getItem('spicyOnly') === 'true' } catch { return false }
@@ -474,10 +650,14 @@ export default function HomePage() {
   const [popularMembers, setPopularMembers] = useState<Array<{ user_id: string; anon_name: string; avatar_url: string | null; colorClass: string }>>([])
   const [businessSpotlight, setBusinessSpotlight] = useState<Array<{ id: string; business_name: string; one_liner: string | null; link_url: string | null; instagram_url: string | null; media_path: string | null; media_type: string | null }>>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
+  const [seedSwitchLoading, setSeedSwitchLoading] = useState(false)
   const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null)
   const [tiers, setTiers] = useState<Tier[]>([])
   const [trendingPostsData, setTrendingPostsData] = useState<Post[]>([])
   const [categoryPoolPosts, setCategoryPoolPosts] = useState<Post[]>([])
+  /** 카테고리 칼럼(썰/먹/일/집) 전용: 카테고리별 최신 5개를 직접 조회해 표시가 바뀌는 문제 방지 */
+  const [categoryColumnPosts, setCategoryColumnPosts] = useState<Record<string, Post[]>>({})
   const [bestPollSpotlight, setBestPollSpotlight] = useState<{
     post: Post
     poll: PollData
@@ -489,9 +669,11 @@ export default function HomePage() {
     proCount: number
     conCount: number
     userVote: 'pro' | 'con' | null
+    proLabel: string
+    conLabel: string
   } | null>(null)
   const [pollByPostId, setPollByPostId] = useState<Record<string, { poll: PollData; counts: number[]; userVoteIndex: number | null }>>({})
-  const [proconByPostId, setProconByPostId] = useState<Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null }>>({})
+  const [proconByPostId, setProconByPostId] = useState<Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel: string; conLabel: string }>>({})
   const sentinelRef = useRef<HTMLDivElement>(null)
   const hasLoadedOnceRef = useRef(false)
   const savedScrollRef = useRef<number | null>(null)
@@ -506,6 +688,32 @@ export default function HomePage() {
     })
   }, [posts, trendingPostsData])
 
+  /** 카테고리 칼럼 8개 → 4x2 그리드 (썰 럽 먹 일 / 돈 집 여 질) */
+  const CATEGORY_COLUMN_IDS = ['story', 'love', 'eat', 'work', 'money', 'home', 'travel', 'question'] as const
+  useEffect(() => {
+    let cancelled = false
+    const fetchCategoryColumns = async () => {
+      const results = await Promise.all(
+        CATEGORY_COLUMN_IDS.map(async (catId) => {
+          const { data } = await supabase
+            .from('posts')
+            .select('id, user_id, title, body, is_spicy, created_at, category')
+            .eq('category', catId)
+            .eq('status', 'visible')
+            .order('created_at', { ascending: false })
+            .limit(5)
+          return { catId, posts: (data ?? []) as Post[] }
+        })
+      )
+      if (cancelled) return
+      const next: Record<string, Post[]> = {}
+      results.forEach(({ catId, posts }) => { next[catId] = posts })
+      setCategoryColumnPosts(next)
+    }
+    fetchCategoryColumns()
+    return () => { cancelled = true }
+  }, [])
+
   const todayPostCount = useMemo(() => {
     const source = [...posts, ...trendingPostsData]
     const todayIds = new Set(source.filter((p) => isTodayLA(p.created_at)).map((p) => p.id))
@@ -517,6 +725,150 @@ export default function HomePage() {
   useEffect(() => {
     getTodayLunchParticipantCount().then(setLunchParticipantCount)
   }, [])
+
+  useEffect(() => {
+    const fetchGlobalAlarms = async () => {
+      const all: Array<{ postId: string; text: string; created_at: string }> = []
+      
+      // 최근 글 작성
+      const { data: recentPosts } = await supabase
+        .from('posts')
+        .select('id, user_id, created_at')
+        .eq('status', 'visible')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentPosts && recentPosts.length > 0) {
+        const postIds = recentPosts.map((p: { id: string }) => p.id)
+        const userIds = [...new Set(recentPosts.map((p: { user_id: string }) => p.user_id))]
+        const [snippetsRes, profilesRes] = await Promise.all([
+          Promise.all(postIds.map((id: string) => supabase.rpc('get_post_notification_snippet', { p_post_id: id }))),
+          userIds.length > 0 ? supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds) : { data: [] },
+        ])
+        const profileMap = new Map((profilesRes.data ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        for (let i = 0; i < recentPosts.length; i++) {
+          const post = recentPosts[i] as { id: string; user_id: string; created_at: string }
+          const snippet = snippetsRes[i]?.data as string | null
+          all.push({
+            postId: post.id,
+            text: `${profileMap.get(post.user_id) || '익명'}님이 글을 작성${snippet ? `: ${snippet}` : ''}`,
+            created_at: post.created_at,
+          })
+        }
+      }
+
+      // 최근 댓글
+      const { data: recentComments } = await supabase
+        .from('comments')
+        .select('post_id, body, user_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentComments && recentComments.length > 0) {
+        const userIds = [...new Set(recentComments.map((c: { user_id: string }) => c.user_id))]
+        const { data: profiles } = userIds.length > 0
+          ? await supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds)
+          : { data: [] }
+        const profileMap = new Map((profiles ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        for (const comment of recentComments) {
+          const c = comment as { post_id: string; body: string; user_id: string; created_at: string }
+          const snippet = c.body?.replace(/\s+/g, ' ').trim().slice(0, 20) + (c.body && c.body.length > 20 ? '…' : '')
+          all.push({
+            postId: c.post_id,
+            text: `${profileMap.get(c.user_id) || '익명'}님이 댓글을 남겼습니다${snippet ? `: ${snippet}` : ''}`,
+            created_at: c.created_at,
+          })
+        }
+      }
+
+      // 최근 반응
+      const { data: recentReactions } = await supabase
+        .from('post_reactions')
+        .select('post_id, user_id, reaction_type, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentReactions && recentReactions.length > 0) {
+        const userIds = [...new Set(recentReactions.map((r: { user_id: string }) => r.user_id))]
+        const { data: profiles } = userIds.length > 0
+          ? await supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds)
+          : { data: [] }
+        const profileMap = new Map((profiles ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        const emojiMap: Record<string, string> = { laugh: '🤣', angry: '😡', mindblown: '🤯', eyes: '👀', chili: '🌶️' }
+        for (const reaction of recentReactions) {
+          const r = reaction as { post_id: string; user_id: string; reaction_type: string; created_at: string }
+          all.push({
+            postId: r.post_id,
+            text: `${profileMap.get(r.user_id) || '익명'}님이 ${emojiMap[r.reaction_type] || '🌶️'} 표시를 했습니다`,
+            created_at: r.created_at,
+          })
+        }
+      }
+
+      // 최근 투표
+      const { data: recentPollVotes } = await supabase
+        .from('post_poll_votes')
+        .select('post_id, user_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentPollVotes && recentPollVotes.length > 0) {
+        const postIds = [...new Set(recentPollVotes.map((v: { post_id: string }) => v.post_id))]
+        const userIds = [...new Set(recentPollVotes.map((v: { user_id: string }) => v.user_id))]
+        const [snippetsRes, profilesRes] = await Promise.all([
+          Promise.all(postIds.map((id: string) => supabase.rpc('get_post_notification_snippet', { p_post_id: id }))),
+          userIds.length > 0 ? supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds) : { data: [] },
+        ])
+        const snippetMap = new Map(postIds.map((id: string, idx: number) => [id, snippetsRes[idx]?.data as string | null]))
+        const profileMap = new Map((profilesRes.data ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        for (const vote of recentPollVotes) {
+          const v = vote as { post_id: string; user_id: string; created_at: string }
+          const snippet = snippetMap.get(v.post_id)
+          all.push({
+            postId: v.post_id,
+            text: `${profileMap.get(v.user_id) || '익명'}님이 ${snippet ? `${snippet}에 ` : ''}투표를 택했어요`,
+            created_at: v.created_at,
+          })
+        }
+      }
+
+      // 최근 찬반
+      const { data: recentProconVotes } = await supabase
+        .from('post_procon_votes')
+        .select('post_id, user_id, side, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentProconVotes && recentProconVotes.length > 0) {
+        const postIds = [...new Set(recentProconVotes.map((v: { post_id: string }) => v.post_id))]
+        const userIds = [...new Set(recentProconVotes.map((v: { user_id: string }) => v.user_id))]
+        const [snippetsRes, profilesRes] = await Promise.all([
+          Promise.all(postIds.map((id: string) => supabase.rpc('get_post_notification_snippet', { p_post_id: id }))),
+          userIds.length > 0 ? await supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds) : { data: [] },
+        ])
+        const snippetMap = new Map(postIds.map((id: string, idx: number) => [id, snippetsRes[idx]?.data as string | null]))
+        const profileMap = new Map((profilesRes.data ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        for (const vote of recentProconVotes) {
+          const v = vote as { post_id: string; user_id: string; side: string; created_at: string }
+          const snippet = snippetMap.get(v.post_id)
+          all.push({
+            postId: v.post_id,
+            text: `${profileMap.get(v.user_id) || '익명'}님이 ${snippet ? `${snippet}에 ` : ''}${v.side === 'pro' ? '찬성' : '반대'}를 택했어요`,
+            created_at: v.created_at,
+          })
+        }
+      }
+
+      // created_at 기준 정렬 후 상위 20개
+      all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      setRecentGlobalAlarms(all.slice(0, 20))
+      setButtonScrollIndex(0)
+    }
+    fetchGlobalAlarms()
+  }, [])
+
+  useEffect(() => {
+    if (recentGlobalAlarms.length === 0) return
+    const interval = setInterval(() => {
+      setButtonScrollIndex((prev) => (prev + 1) % recentGlobalAlarms.length)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [recentGlobalAlarms.length])
 
   useEffect(() => {
     Promise.all([fetchSiteSettings(), fetchTiers()]).then(([s, t]) => {
@@ -553,6 +905,7 @@ export default function HomePage() {
   }
   useEffect(() => {
     setFakeLiveCount((Date.now() % 19) + 12)
+    setFakeTypingCount(Math.floor(Math.random() * 35) + 3)
   }, [])
 
   useEffect(() => {
@@ -741,6 +1094,12 @@ export default function HomePage() {
     })
   }, [user?.id])
   useEffect(() => {
+    fetch('/api/admin-ids')
+      .then((r) => r.json())
+      .then((data: { adminIds?: string[] }) => setAdminUserIds(new Set(data.adminIds ?? [])))
+      .catch(() => setAdminUserIds(new Set()))
+  }, [])
+  useEffect(() => {
     if (!user?.id) {
       setHeaderAnonName(null)
       setHeaderAvatarUrl(null)
@@ -895,14 +1254,16 @@ export default function HomePage() {
         setPollByPostId((prev) => ({ ...prev, ...newPollByPostId }))
       }
 
-      const { data: proconRows } = await supabase.from('post_procon').select('post_id').in('post_id', postIds)
+      const { data: proconRows } = await supabase.from('post_procon').select('post_id, pro_label, con_label').in('post_id', postIds)
       const proconPostIds = (proconRows ?? []).map((r: { post_id: string }) => r.post_id)
       if (proconPostIds.length > 0) {
         const { data: proconVotes } = await supabase.from('post_procon_votes').select('post_id, side, user_id').in('post_id', proconPostIds)
         const votesList = (proconVotes ?? []) as { post_id: string; side: string; user_id: string }[]
         const currentUserId = user?.id ?? null
-        const newProconByPostId: Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null }> = {}
-        for (const postId of proconPostIds) {
+        const newProconByPostId: Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel: string; conLabel: string }> = {}
+        for (const row of proconRows ?? []) {
+          const r = row as { post_id: string; pro_label?: string | null; con_label?: string | null }
+          const postId = r.post_id
           const votes = votesList.filter((v) => v.post_id === postId)
           const proCount = votes.filter((v) => v.side === 'pro').length
           const conCount = votes.filter((v) => v.side === 'con').length
@@ -911,13 +1272,25 @@ export default function HomePage() {
             const my = votes.find((v) => v.user_id === currentUserId)
             if (my) userVote = my.side as 'pro' | 'con'
           }
-          newProconByPostId[postId] = { proCount, conCount, userVote }
+          newProconByPostId[postId] = {
+            proCount,
+            conCount,
+            userVote,
+            proLabel: r.pro_label?.trim() || '찬',
+            conLabel: r.con_label?.trim() || '반',
+          }
         }
         setProconByPostId((prev) => ({ ...prev, ...newProconByPostId }))
       }
     },
     [siteSettings, tiers, user?.id]
   )
+
+  useEffect(() => {
+    const flat = CATEGORY_COLUMN_IDS.flatMap((catId) => categoryColumnPosts[catId] ?? [])
+    if (flat.length === 0) return
+    fetchCountsAndThumbnails(flat)
+  }, [categoryColumnPosts, fetchCountsAndThumbnails])
 
   useEffect(() => {
     if (siteSettings == null || tiers.length === 0) return
@@ -963,16 +1336,43 @@ export default function HomePage() {
     getLunchHallOfFame(10).then(setLunchHallOfFame)
   }, [])
 
+  // Handle lunch_date query parameter - scroll to lunch section if present
+  useEffect(() => {
+    const lunchDate = searchParams.get('lunch_date')
+    if (lunchDate && typeof window !== 'undefined') {
+      // Small delay to ensure page is rendered
+      setTimeout(() => {
+        const lunchSection = document.getElementById('lunch')
+        if (lunchSection) {
+          lunchSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 100)
+    }
+  }, [searchParams])
+
   useEffect(() => {
     if (siteSettings == null || tiers.length === 0) return
     const minC = siteSettings.trending_min_count ?? DEFAULT_TRENDING_MIN
-    const maxC = siteSettings.trending_max ?? DEFAULT_TRENDING_MAX
-    supabase.rpc('get_trending_post_ids', { p_min_count: minC, p_max_count: maxC }).then(({ data: ids, error }) => {
-      if (error || !ids?.length) {
+    const maxC = Math.max(siteSettings.trending_max ?? DEFAULT_TRENDING_MAX, 10) // 최소 10개 보장
+    // 여유분으로 가져온 뒤 렌더 시 스포트라이트 ID는 별도 state로 제외 (의존성 제거로 피드와 동시 로딩)
+    const adjustedMaxC = Math.max(15, maxC + 5)
+    supabase.rpc('get_trending_post_ids', { p_min_count: minC, p_max_count: adjustedMaxC }).then(async ({ data: ids, error }) => {
+      if (error) {
         setTrendingPostsData([])
         return
       }
-      const idList = ids as { post_id: string }[]
+      let idList = (ids ?? []) as { post_id: string }[]
+      // 충분한 개수를 얻지 못한 경우, minC를 낮춰서 추가로 가져오기
+      if (idList.length < adjustedMaxC && minC > 1) {
+        const lowerMinC = Math.max(1, Math.floor(minC / 2))
+        const needed = adjustedMaxC - idList.length
+        const existingIds = new Set(idList.map(r => r.post_id))
+        const fallbackRes = await supabase.rpc('get_trending_post_ids', { p_min_count: lowerMinC, p_max_count: adjustedMaxC + needed })
+        if (fallbackRes.data) {
+          const fallbackIds = (fallbackRes.data as { post_id: string }[]).filter(r => !existingIds.has(r.post_id))
+          idList = [...idList, ...fallbackIds.slice(0, needed)]
+        }
+      }
       const orderIds = idList.map((r) => r.post_id)
       supabase
         .from('posts')
@@ -1024,6 +1424,8 @@ export default function HomePage() {
 
       if (proconPayload?.post_id) {
         const postRow = await supabase.from('posts').select('id, user_id, title, body, is_spicy, created_at, category').eq('id', proconPayload.post_id).eq('status', 'visible').maybeSingle()
+        const proconMetaRow = await supabase.from('post_procon').select('pro_label, con_label').eq('post_id', proconPayload.post_id).maybeSingle()
+        if (cancelled) return
         if (!cancelled && postRow.data) {
           const post = postRow.data as Post
           const votesRow = await supabase.from('post_procon_votes').select('side, user_id').eq('post_id', post.id)
@@ -1036,7 +1438,15 @@ export default function HomePage() {
             const my = votes.find((v) => v.user_id === user.id)
             if (my) userVote = my.side as 'pro' | 'con'
           }
-          setBestProconSpotlight({ post, proCount, conCount, userVote })
+          const meta = proconMetaRow.data as { pro_label?: string | null; con_label?: string | null } | null
+          setBestProconSpotlight({
+            post,
+            proCount,
+            conCount,
+            userVote,
+            proLabel: meta?.pro_label?.trim() || '찬',
+            conLabel: meta?.con_label?.trim() || '반',
+          })
         }
       }
     }
@@ -1082,7 +1492,7 @@ export default function HomePage() {
   const filteredBySpicy = spicyOnly ? uniquePosts.filter((p) => p.is_spicy) : uniquePosts
   const filteredPosts = blockedIds.size > 0 ? filteredBySpicy.filter((p) => !blockedIds.has(p.user_id)) : filteredBySpicy
   const trendingMin = siteSettings?.trending_min_count ?? DEFAULT_TRENDING_MIN
-  const trendingMax = siteSettings?.trending_max ?? DEFAULT_TRENDING_MAX
+  const trendingMax = Math.max(siteSettings?.trending_max ?? DEFAULT_TRENDING_MAX, 10) // 최소 10개 보장
   const trendingFromFeed =
     trendingPostsData.length === 0
       ? filteredPosts
@@ -1102,18 +1512,28 @@ export default function HomePage() {
     trendingPostsData.length > 0
       ? trendingPostsData.filter((p) => !blockedIds.has(p.user_id) && !spotlightPostIds.has(p.id))
       : trendingFromFeed.filter((p) => !spotlightPostIds.has(p.id))
-  const trendingIds = new Set(trendingPostsDisplay.map((p) => p.id))
-  const latestPosts = filteredPosts.filter((p) => !trendingIds.has(p.id))
+  
 
-  const CATEGORY_COLUMN_IDS = ['story', 'eat', 'work', 'home'] as const
+  
+  // 방금 올라온 글에는 피드 글 전부 표시 (트렌딩에만 있는 새 글도 포함). 카테고리 선택 시 해당 카테고리 트렌딩만 병합.
+  const latestPosts = useMemo(() => {
+    const map = new Map(filteredPosts.map((p) => [p.id, p]))
+    const toMerge = selectedFilter === 'all'
+      ? trendingPostsData
+      : trendingPostsData.filter((p) => p.category === selectedFilter)
+    toMerge.forEach((p) => {
+      if (!map.has(p.id)) map.set(p.id, p)
+    })
+    return Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [filteredPosts, trendingPostsData, selectedFilter])
+
   const poolForCategories =
     blockedIds.size > 0
       ? categoryPoolPosts.filter((p) => !blockedIds.has(p.user_id))
       : categoryPoolPosts
   const postsByCategory = CATEGORY_COLUMN_IDS.map((catId) => {
-    const list = poolForCategories
-      .filter((p) => p.category === catId)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    const list = (categoryColumnPosts[catId] ?? [])
+      .filter((p) => !blockedIds.has(p.user_id))
       .slice(0, 5)
     return { catId, posts: list }
   })
@@ -1171,9 +1591,33 @@ export default function HomePage() {
         <button
           type="button"
           onClick={() => document.getElementById('feed-filters')?.scrollIntoView({ behavior: 'smooth' })}
-          className="w-full rounded-xl border border-border bg-muted/40 px-4 py-3 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+          className="w-full rounded-xl border border-border bg-muted/40 px-4 py-3 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors relative overflow-hidden"
         >
-          어떤 이야기가 궁금하세요?
+          <div className="relative h-5">
+            {recentGlobalAlarms.length > 0 ? (
+              recentGlobalAlarms.map((alarm, idx) => {
+                const isVisible = idx === buttonScrollIndex
+                return (
+                  <div
+                    key={`${alarm.postId}-${alarm.created_at}-${idx}`}
+                    className={`absolute inset-0 transition-all duration-500 ease-in-out ${
+                      isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+                    }`}
+                  >
+                    <Link
+                      href={`/p/${alarm.postId}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="block truncate"
+                    >
+                      {alarm.text}
+                    </Link>
+                  </div>
+                )
+              })
+            ) : (
+              <span>어떤 이야기가 궁금하세요?</span>
+            )}
+          </div>
         </button>
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
@@ -1191,36 +1635,93 @@ export default function HomePage() {
               점메추 {lunchParticipantCount}명 참여
             </span>
           )}
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+            </span>
+            {fakeTypingCount}명 폭주중...⌨️
+          </span>
           <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
             {todayPhrase}
           </span>
         </div>
       </section>
 
-      {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) && (
-        <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 ${TRENDING_GRADIENT}`} aria-label="인기 글">
+      {siteSettings != null && (
+        <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
           <h2 className="text-base font-semibold text-foreground mb-3">LA 20·30이 많이 본 글</h2>
-          {trendingPostsDisplay.length > 0 && (
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 mb-5">
-              {trendingPostsDisplay.map((post) => (
-                <PostGridCard
-                  key={post.id}
-                  post={post}
-                  user={user}
-                  commentCount={commentCounts[post.id] ?? 0}
-                  reactionCount={reactionCounts[post.id] ?? 0}
-                  postMedia={postMedia[post.id]}
-                  anonName={anonMap[post.user_id] ?? '익명'}
-                  avatarUrl={avatarMap[post.user_id]}
-                  avatarColorClass={avatarColorMap[post.user_id]}
-                  isLunchWinner={lunchWinnerUserIds.has(post.user_id)}
-                  lunchWinCount={lunchWinCountByUserId[post.user_id]}
-                  pollData={pollByPostId[post.id]}
-                  proconData={proconByPostId[post.id]}
-                />
-              ))}
-            </ul>
-          )}
+          {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) ? (
+          <>
+          {trendingPostsDisplay.length > 0 && (() => {
+            // 2칼럼 × 3행 = 6개 (기본), 2칼럼 × 6행 = 12개 (확장)
+            const maxRows = trendingRowsExpanded ? 6 : 3
+            const maxCards = maxRows * 2
+            const displayedPosts = trendingPostsDisplay.slice(0, maxCards)
+            const hasMore = trendingPostsDisplay.length > maxCards
+            
+            // JavaScript로 masonry 레이아웃 계산: 각 포스트를 가장 낮은 칼럼에 배치
+            const columns: Post[][] = [[], []]
+            displayedPosts.forEach((post) => {
+              // 각 칼럼의 높이 추정 (이미지 유무에 따라 다름)
+              const columnHeights = columns.map((col: Post[]) => {
+                return col.reduce((sum, p) => {
+                  const hasImage = postMedia[p.id]?.[0]
+                  return sum + (hasImage ? 300 : 150) // 이미지 있으면 300px, 없으면 150px 추정
+                }, 0)
+              })
+              // 가장 낮은 칼럼에 추가
+              const minHeightIndex = columnHeights[0] <= columnHeights[1] ? 0 : 1
+              columns[minHeightIndex].push(post)
+            })
+            
+            return (
+              <div className="mb-5">
+                <div className="flex gap-4">
+                  {columns.map((columnPosts, colIndex) => (
+                    <div key={colIndex} className="flex-1 min-w-0 basis-0 flex flex-col gap-4">
+                      {columnPosts.map((post) => (
+                        <div key={post.id}>
+                          <PostGridCard
+                            post={post}
+                            user={user}
+                            commentCount={commentCounts[post.id] ?? 0}
+                            reactionCount={reactionCounts[post.id] ?? 0}
+                            postMedia={postMedia[post.id]}
+                            anonName={anonMap[post.user_id] ?? '익명'}
+                            avatarUrl={avatarMap[post.user_id]}
+                            avatarColorClass={avatarColorMap[post.user_id]}
+                            isLunchWinner={lunchWinnerUserIds.has(post.user_id)}
+                            lunchWinCount={lunchWinCountByUserId[post.user_id]}
+                            pollData={pollByPostId[post.id]}
+                            proconData={proconByPostId[post.id]}
+                            compactTrending
+                            isAdminAuthor={adminUserIds.has(post.user_id)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                {(hasMore || trendingRowsExpanded) && (
+                  <div className="mt-4 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setTrendingRowsExpanded(!trendingRowsExpanded)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-full border border-border bg-background hover:bg-muted"
+                    >
+                      {trendingRowsExpanded ? '접기' : '더보기'}
+                      {trendingRowsExpanded ? (
+                        <ChevronUp className="size-4" aria-hidden />
+                      ) : (
+                        <ChevronDown className="size-4" aria-hidden />
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
           {(bestPollSpotlight || bestProconSpotlight) && (
             <div className="flex flex-col gap-2 mb-5" aria-label="투표·찬반">
               {bestPollSpotlight && (
@@ -1292,6 +1793,10 @@ export default function HomePage() {
               })}
             </div>
           )}
+          </>
+          ) : (
+            <TrendingSectionSkeleton />
+          )}
         </section>
       )}
 
@@ -1299,7 +1804,7 @@ export default function HomePage() {
         <BannerAd slotKey="home-between-trending-lunch" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-trending-lunch') : 3} />
       </div>
 
-      <section id="lunch" aria-label="점메추">
+      <section id="lunch" className="min-h-[280px]" aria-label="점메추">
         <LunchSection user={user} hallOfFame={lunchHallOfFame} feedAvatarMap={avatarMap} />
       </section>
 
@@ -1424,37 +1929,42 @@ export default function HomePage() {
         </section>
       )}
 
-      {initialLoading && posts.length === 0 && (
-        <ul>
-          {[1, 2, 3].map((i) => <PostCardSkeleton key={i} />)}
-        </ul>
-      )}
-      {!initialLoading && (
-        <section id="latest-posts" className="rounded-t-xl -mt-3 pt-2 pb-4 bg-background" aria-label="최신 글">
-          <div className="px-4 flex flex-wrap items-center gap-2 mb-3">
-            <h2 className="text-sm font-semibold text-foreground shrink-0">방금 올라온 글</h2>
-            <div id="feed-filters" className="flex flex-wrap items-center gap-1.5">
-              {FILTER_ORDER.map((id) => {
-                const f = FILTERS.find((x) => x.id === id)
-                if (!f) return null
-                const isSelected = selectedFilter === f.id
-                return (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setSelectedFilter(f.id)}
-                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${isSelected ? 'bg-foreground text-background' : 'bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted'}`}
-                    aria-label={f.label}
-                    aria-pressed={isSelected}
-                  >
-                    <span aria-hidden>{f.icon}</span>
-                    <span>{f.label}</span>
-                  </button>
-                )
-              })}
-            </div>
+      <section id="latest-posts" className="rounded-t-xl -mt-3 pt-2 pb-4 bg-background min-h-[360px]" aria-label="최신 글">
+        <div className="px-4 flex flex-wrap items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold text-foreground shrink-0">방금 올라온 글</h2>
+          <div id="feed-filters" className="flex flex-wrap items-center gap-1.5">
+            {FILTER_ORDER.map((id) => {
+              const f = FILTERS.find((x) => x.id === id)
+              if (!f) return null
+              const isSelected = selectedFilter === f.id
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedFilter(f.id)
+                    // Remove lunch_date from URL when category changes
+                    const lunchDate = searchParams.get('lunch_date')
+                    if (lunchDate) {
+                      router.replace('/', { scroll: false })
+                    }
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${isSelected ? 'bg-foreground text-background' : 'bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                  aria-label={f.label}
+                  aria-pressed={isSelected}
+                >
+                  <span aria-hidden>{f.icon}</span>
+                  <span>{f.label}</span>
+                </button>
+              )
+            })}
           </div>
-          {posts.length === 0 ? (
+        </div>
+        {initialLoading && posts.length === 0 ? (
+            <ul>
+              {[1, 2, 3].map((i) => <PostCardSkeleton key={i} />)}
+            </ul>
+          ) : posts.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground text-sm">
               아직 글이 없어.
             </div>
@@ -1495,14 +2005,14 @@ export default function HomePage() {
                     lunchWinCount={lunchWinCountByUserId[post.user_id]}
                     pollData={pollByPostId[post.id]}
                     proconData={proconByPostId[post.id]}
+                    isAdminAuthor={adminUserIds.has(post.user_id)}
                   />
                 )
                 return nodes
               })}
             </ul>
           )}
-        </section>
-      )}
+      </section>
 
       <div ref={sentinelRef} className="min-h-12 flex items-center justify-center py-4">
         {loadingMore && (
@@ -1617,20 +2127,43 @@ export default function HomePage() {
           </Link>
           {user ? (
             /^a\d+@gmail\.com$/i.test(user.email ?? '') ? (
-              <div className="flex flex-col items-center gap-0.5 py-2 min-w-[3rem]">
+              <div className="flex flex-col items-center gap-1 py-2 min-w-[3rem]">
+                <Link href="/profile" className="flex flex-col items-center gap-0.5 text-muted-foreground hover:text-foreground" aria-label="Profile">
+                  <span className={`size-8 rounded-full flex items-center justify-center text-base overflow-visible shrink-0 ${!headerAvatarUrl ? (headerAvatarColorClass || getAvatarColorClass(null, user.id)) : 'relative'}`}>
+                    {headerAvatarUrl ? (
+                      <>
+                        <div className={`absolute inset-0 rounded-full ${headerAvatarColorClass || getAvatarColorClass(null, user.id)}`} aria-hidden />
+                        <div className="relative size-6 rounded-full overflow-hidden bg-background ring-2 ring-background">
+                          <Image src={headerAvatarUrl} alt="" width={24} height={24} className="w-full h-full object-cover" />
+                        </div>
+                      </>
+                    ) : (
+                      userAvatarEmoji(user.id)
+                    )}
+                  </span>
+                  <span className="text-[10px] truncate max-w-[4rem]" title={headerAnonName ?? undefined}>{headerAnonName ?? '프로필'}</span>
+                </Link>
                 <select
-                  className="text-[10px] font-medium text-muted-foreground hover:text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--spicy)]"
+                  className="text-[9px] font-medium text-muted-foreground hover:text-foreground bg-transparent border border-border rounded px-1 py-0.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--spicy)] disabled:opacity-60 disabled:cursor-wait max-w-[3rem]"
                   value={(user.email ?? '').toLowerCase()}
                   aria-label="시드 계정 전환"
+                  disabled={seedSwitchLoading}
+                  onClick={(e) => e.stopPropagation()}
                   onChange={async (e) => {
                     const email = e.target.value
                     if (!email || email === user.email) return
-                    const { url, error } = await getSwitchSeedAccountLink(email, typeof window !== 'undefined' ? window.location.origin : undefined)
-                    if (error) {
-                      alert(error)
-                      return
+                    const origin = typeof window !== 'undefined' ? window.location.origin : undefined
+                    setSeedSwitchLoading(true)
+                    try {
+                      const { url, error } = await getSwitchSeedAccountLink(email, origin)
+                      if (error) {
+                        alert(error)
+                        return
+                      }
+                      if (url) window.location.href = url
+                    } finally {
+                      setSeedSwitchLoading(false)
                     }
-                    if (url) window.location.href = url
                   }}
                 >
                   {Array.from({ length: 100 }, (_, i) => {
@@ -1639,7 +2172,7 @@ export default function HomePage() {
                     return <option key={em} value={em}>a{n}</option>
                   })}
                 </select>
-                <span className="text-[10px] text-muted-foreground">계정</span>
+                <span className="text-[9px] text-muted-foreground">{seedSwitchLoading ? '전환 중…' : '계정'}</span>
               </div>
             ) : (
               <Link href="/profile" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground min-w-[3rem]" aria-label="Profile">
@@ -1655,7 +2188,7 @@ export default function HomePage() {
                     userAvatarEmoji(user.id)
                   )}
                 </span>
-                <span className="text-[10px]">프로필</span>
+                <span className="text-[10px] truncate max-w-[4rem]" title={headerAnonName ?? undefined}>{headerAnonName ?? '프로필'}</span>
               </Link>
             )
           ) : (
@@ -1668,5 +2201,13 @@ export default function HomePage() {
       </nav>
       <div className="h-14 shrink-0" aria-hidden />
     </main>
+  )
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">불러오는 중…</div>}>
+      <HomePageInner />
+    </Suspense>
   )
 }

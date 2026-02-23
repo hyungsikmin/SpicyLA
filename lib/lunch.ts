@@ -264,6 +264,56 @@ export async function getYesterdayWinner(timezone?: string): Promise<YesterdayWi
   }
 }
 
+/** 특정 날짜의 우승 추천 상세 정보 (투표 수 포함). */
+export async function getWinnerRecommendationByDate(roundDate: string): Promise<RecommendationWithMeta | null> {
+  const { data: round } = await supabase
+    .from('lunch_rounds')
+    .select('id, winner_recommendation_id')
+    .eq('round_date', roundDate)
+    .maybeSingle()
+  if (!round?.winner_recommendation_id) return null
+  const { data: rec } = await supabase
+    .from('lunch_recommendations')
+    .select('id, round_id, user_id, restaurant_name, location, link_url, one_line_reason, created_at')
+    .eq('id', round.winner_recommendation_id)
+    .single()
+  if (!rec) return null
+  const recIds = [rec.id]
+  const userIds = [rec.user_id]
+  const [profilesRes, votesRes] = await Promise.all([
+    supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds),
+    supabase.from('lunch_votes').select('recommendation_id, user_id, vote_type').in('recommendation_id', recIds),
+  ])
+  const anonByUser = new Map<string, string>()
+  ;(profilesRes.data ?? []).forEach((p: { user_id: string; anon_name: string | null }) => {
+    anonByUser.set(p.user_id, (p.anon_name || '익명').trim() || '익명')
+  })
+  const wantCount: Record<string, number> = {}
+  const unsureCount: Record<string, number> = {}
+  const wtfCount: Record<string, number> = {}
+  recIds.forEach((id) => {
+    wantCount[id] = 0
+    unsureCount[id] = 0
+    wtfCount[id] = 0
+  })
+  ;(votesRes.data ?? []).forEach((v: { recommendation_id: string; vote_type: string }) => {
+    if (v.vote_type === 'want') wantCount[v.recommendation_id] = (wantCount[v.recommendation_id] ?? 0) + 1
+    else if (v.vote_type === 'unsure') unsureCount[v.recommendation_id] = (unsureCount[v.recommendation_id] ?? 0) + 1
+    else if (v.vote_type === 'wtf') wtfCount[v.recommendation_id] = (wtfCount[v.recommendation_id] ?? 0) + 1
+  })
+  const SCORE = { want: 2, unsure: 0, wtf: -1 }
+  const score = wantCount[rec.id] * SCORE.want + unsureCount[rec.id] * SCORE.unsure + wtfCount[rec.id] * SCORE.wtf
+  return {
+    ...rec,
+    anon_name: anonByUser.get(rec.user_id) ?? '익명',
+    want_count: wantCount[rec.id] ?? 0,
+    unsure_count: unsureCount[rec.id] ?? 0,
+    wtf_count: wtfCount[rec.id] ?? 0,
+    score,
+    my_vote: null,
+  }
+}
+
 /** 지난 7일(설정 타임존 기준) 점메추왕 메뉴 목록. round_date 내림차순. */
 export async function getLast7DaysWinnerMenus(timezone?: string): Promise<Last7DaysWinnerEntry[]> {
   const tz = timezone ?? (await fetchLunchSettings()).timezone
@@ -323,17 +373,11 @@ export async function getLunchWinCount(userId: string): Promise<number> {
 
 export type HallOfFameEntry = { user_id: string; anon_name: string; win_count: number; avatar_url?: string | null; profile_color_index?: number | null }
 
-/** 최근 7일 점메추 우승 횟수 상위 N명 (명예의 전당). */
+/** 지금까지 점메추 1등한 사람들 우승 횟수 상위 N명 (명예의 전당, 타임프레임 없음). */
 export async function getLunchHallOfFame(limit = 10): Promise<HallOfFameEntry[]> {
-  const tz = (await fetchLunchSettings()).timezone
-  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz })
-  const [y, m, d] = todayStr.split('-').map(Number)
-  const fromDate = new Date(y, m - 1, d - 6)
-  const fromStr = fromDate.getFullYear() + '-' + String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + String(fromDate.getDate()).padStart(2, '0')
   const { data: rounds } = await supabase
     .from('lunch_rounds')
     .select('id, winner_recommendation_id')
-    .gte('round_date', fromStr)
     .not('winner_recommendation_id', 'is', null)
   const winnerRecIds = (rounds ?? []).map((r) => r.winner_recommendation_id).filter(Boolean) as string[]
   if (winnerRecIds.length === 0) return []

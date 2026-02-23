@@ -29,24 +29,20 @@ export default function ReactionButton({
   const level = getLevel(count)
 
   const handleClick = async () => {
-    if (userReacted || !hasUser) return
+    if (userReacted || !hasUser || loading) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setLoading(true)
+    setUserReacted(true)
+    setCount((c) => c + 1)
     const { error } = await supabase.from('post_reactions').insert({
       post_id: postId,
       user_id: user.id,
     })
     setLoading(false)
-    if (!error) {
-      setUserReacted(true)
-      const { count: newCount } = await supabase
-        .from('post_reactions')
-        .select('id', { count: 'exact', head: true })
-        .eq('post_id', postId)
-      setCount(newCount ?? initialCount + 1)
-    } else if (error.code === '23505') {
-      setUserReacted(true)
+    if (error && error.code !== '23505') {
+      setUserReacted(false)
+      setCount(initialCount)
     }
   }
 

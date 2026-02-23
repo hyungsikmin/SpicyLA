@@ -25,16 +25,19 @@ export async function getSwitchSeedAccountLink(
   if (!SEED_EMAIL_REGEX.test(trimmed)) return { error: '올바른 시드 이메일이 아니에요 (a1@gmail.com ~ a100@gmail.com).' }
 
   const origin = redirectTo ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://spicy-la.vercel.app')
+  const redirectFull = `${origin}/auth/callback`
   const admin = getSupabaseAdmin()
   const { data, error } = await admin.auth.admin.generateLink({
     type: 'magiclink',
     email: trimmed,
-    options: { redirectTo: `${origin}/` },
+    options: { redirectTo: redirectFull },
   })
 
   if (error) return { error: error.message }
   const linkData = data as { properties?: { action_link?: string }; action_link?: string }
-  const url = linkData?.properties?.action_link ?? linkData?.action_link
+  let url = linkData?.properties?.action_link ?? linkData?.action_link
   if (!url) return { error: '로그인 링크를 만들 수 없어요.' }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '')
+  if (supabaseUrl && !url.startsWith('http')) url = `${supabaseUrl}${url.startsWith('/') ? '' : '/'}${url}`
   return { url }
 }

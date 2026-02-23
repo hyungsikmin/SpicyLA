@@ -13,6 +13,7 @@ import PollBlock, { type PollData } from '@/components/PollBlock'
 import ProconBar from '@/components/ProconBar'
 import Image from 'next/image'
 import { createSupabaseServer } from '@/lib/supabaseServer'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { getPostImageUrl, getAvatarUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 import { userAvatarEmoji } from '@/lib/postAvatar'
@@ -250,6 +251,16 @@ export default async function PostPage({
     if (!anonMap[c.user_id]) anonMap[c.user_id] = '익명'
   })
 
+  let adminUserIds: string[] = []
+  try {
+    const admin = getSupabaseAdmin()
+    const { data: adminRows } = await admin.from('admin_users').select('user_id')
+    adminUserIds = (adminRows ?? []).map((r: { user_id: string }) => r.user_id)
+  } catch {
+    // ignore
+  }
+  const isAdminAuthor = adminUserIds.includes(post.user_id)
+
   const { data: media } = await supabase
     .from('post_media')
     .select('id, file_path, position')
@@ -302,13 +313,18 @@ export default async function PostPage({
 
   const { data: proconRow } = await supabase
     .from('post_procon')
-    .select('id, post_id')
+    .select('id, post_id, pro_label, con_label')
     .eq('post_id', id)
     .maybeSingle()
   let proconProCount = 0
   let proconConCount = 0
   let proconUserVote: 'pro' | 'con' | null = null
+  let proconProLabel = '찬'
+  let proconConLabel = '반'
   if (proconRow) {
+    const row = proconRow as { pro_label?: string | null; con_label?: string | null }
+    if (row.pro_label?.trim()) proconProLabel = row.pro_label.trim()
+    if (row.con_label?.trim()) proconConLabel = row.con_label.trim()
     const { data: proconVotes } = await supabase
       .from('post_procon_votes')
       .select('side, user_id')
@@ -354,7 +370,10 @@ export default async function PostPage({
                   )}
                 </div>
                 <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
-                  <span className="font-semibold text-sm">{anonMap[post.user_id] ?? '익명'}</span>
+                  {isAdminAuthor && (
+                    <span className="rounded-full bg-red-500/20 text-red-500 dark:text-red-400 text-[10px] font-semibold px-1.5 py-0.5 border border-red-500/40 shrink-0">관리자</span>
+                  )}
+                  <span className={`font-semibold text-sm ${isAdminAuthor ? 'text-red-500 dark:text-red-400 font-bold' : ''}`}>{anonMap[post.user_id] ?? '익명'}</span>
                   <span className="text-muted-foreground text-sm">·</span>
                   <RelativeTime date={post.created_at} />
                 </div>
@@ -404,6 +423,8 @@ export default async function PostPage({
                   conCount={proconConCount}
                   userVote={proconUserVote}
                   currentUserId={user?.id ?? null}
+                  proLabel={proconProLabel}
+                  conLabel={proconConLabel}
                 />
               </>
             )}
@@ -475,7 +496,6 @@ export default async function PostPage({
             comments={commentsFiltered}
             likeCountByComment={likeCountByComment}
             likedCommentIds={Array.from(likedCommentIds)}
-            toggleCommentLike={toggleCommentLike}
             anonMap={anonMap}
             avatarMap={avatarMap}
             avatarColorMap={avatarColorMap}
@@ -483,6 +503,7 @@ export default async function PostPage({
             hasUser={!!user}
             currentUserId={user?.id}
             bestCommentMinLikes={bestCommentMinLikes}
+            adminUserIds={adminUserIds}
           />
         </div>
       </section>

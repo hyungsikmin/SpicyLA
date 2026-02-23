@@ -3,6 +3,7 @@
 import { createSupabaseServer } from '@/lib/supabaseServer'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { generateAnonName } from '@/lib/anon'
+import { getPersonaTemplateForIndex } from '@/lib/seedPersonas'
 
 const SEED_PASSWORD = process.env.SEED_ACCOUNT_PASSWORD ?? 'seed-change-me'
 
@@ -95,7 +96,7 @@ export async function createSeedAccountsBulk(formData: {
   }
 }
 
-export type SeedAccountRow = { user_id: string; email: string; created_at: string }
+export type SeedAccountRow = { user_id: string; email: string; created_at: string; persona_prompt?: string | null }
 
 export async function getSeedAccountsList(): Promise<
   { ok: true; list: SeedAccountRow[] } | { ok: false; error: string }
@@ -107,12 +108,42 @@ export async function getSeedAccountsList(): Promise<
     const supabaseAdmin = getSupabaseAdmin()
     const { data, error } = await supabaseAdmin
       .from('seed_accounts')
-      .select('user_id, email, created_at')
+      .select('user_id, email, created_at, persona_prompt')
       .order('created_at', { ascending: false })
       .limit(200)
     if (error) return { ok: false, error: error.message }
     return { ok: true, list: (data ?? []) as SeedAccountRow[] }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : '목록 조회 실패' }
+  }
+}
+
+/** 페르소나가 비어 있는 시드 계정에 템플릿 할당 (AI 에이전트용). */
+export async function assignPersonasToSeeds(): Promise<
+  { ok: true; updated: number } | { ok: false; error: string }
+> {
+  const admin = await ensureAdmin()
+  if (!admin.ok) return admin
+  try {
+    const supabaseAdmin = getSupabaseAdmin()
+    const { data: seeds, error: fetchError } = await supabaseAdmin
+      .from('seed_accounts')
+      .select('user_id, persona_prompt')
+      .limit(500)
+    if (fetchError) return { ok: false, error: fetchError.message }
+    let updated = 0
+    for (let i = 0; i < (seeds ?? []).length; i++) {
+      const row = seeds![i] as { user_id: string; persona_prompt: string | null }
+      if (row.persona_prompt?.trim()) continue
+      const persona = getPersonaTemplateForIndex(i)
+      const { error: updateError } = await supabaseAdmin
+        .from('seed_accounts')
+        .update({ persona_prompt: persona })
+        .eq('user_id', row.user_id)
+      if (!updateError) updated++
+    }
+    return { ok: true, updated }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : '페르소나 할당 실패' }
   }
 }

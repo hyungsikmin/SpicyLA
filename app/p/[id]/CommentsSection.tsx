@@ -9,6 +9,7 @@ import RelativeTime from '@/components/RelativeTime'
 import AuthorMenu from './AuthorMenu'
 import { userAvatarEmoji } from '@/lib/postAvatar'
 import { getAvatarColorClass } from '@/lib/avatarColors'
+import { supabase } from '@/lib/supabaseClient'
 
 type Comment = {
   id: string
@@ -24,8 +25,6 @@ type SubmitComment = (
   parentId?: string | null
 ) => Promise<{ ok?: boolean; error?: string }>
 
-type ToggleCommentLike = (formData: FormData) => Promise<void>
-
 const COMMENTS_PAGE_SIZE = 5
 
 function sortByCreated(comments: Comment[]) {
@@ -40,7 +39,6 @@ export default function CommentsSection({
   comments,
   likeCountByComment = {},
   likedCommentIds = [],
-  toggleCommentLike,
   anonMap,
   avatarMap = {},
   avatarColorMap = {},
@@ -48,13 +46,13 @@ export default function CommentsSection({
   hasUser,
   currentUserId,
   bestCommentMinLikes,
+  adminUserIds = [],
 }: {
   postId: string
   postAuthorId: string
   comments: Comment[]
   likeCountByComment?: Record<string, number>
   likedCommentIds?: string[]
-  toggleCommentLike?: ToggleCommentLike
   anonMap: Record<string, string>
   avatarMap?: Record<string, string>
   avatarColorMap?: Record<string, string>
@@ -62,11 +60,54 @@ export default function CommentsSection({
   hasUser: boolean
   currentUserId?: string | null
   bestCommentMinLikes?: number
+  adminUserIds?: string[]
 }) {
   const minLikes = bestCommentMinLikes ?? 1
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [visibleRootCount, setVisibleRootCount] = useState(COMMENTS_PAGE_SIZE)
   const [visibleRepliesByRoot, setVisibleRepliesByRoot] = useState<Record<string, number>>({})
+  const [localLikeCountByComment, setLocalLikeCountByComment] = useState<Record<string, number>>(() => ({ ...likeCountByComment }))
+  const [localLikedCommentIds, setLocalLikedCommentIds] = useState<Set<string>>(() => new Set(likedCommentIds ?? []))
+  const [likeTogglingId, setLikeTogglingId] = useState<string | null>(null)
+
+  const handleToggleCommentLike = async (commentId: string) => {
+    if (!hasUser || !currentUserId || likeTogglingId) return
+    const wasLiked = localLikedCommentIds.has(commentId)
+    const prevCount = localLikeCountByComment[commentId] ?? 0
+    setLikeTogglingId(commentId)
+    setLocalLikedCommentIds((prev) => {
+      const next = new Set(prev)
+      if (wasLiked) next.delete(commentId)
+      else next.add(commentId)
+      return next
+    })
+    setLocalLikeCountByComment((prev) => ({
+      ...prev,
+      [commentId]: Math.max(0, (prev[commentId] ?? 0) + (wasLiked ? -1 : 1)),
+    }))
+    if (wasLiked) {
+      const { error } = await supabase
+        .from('comment_likes')
+        .delete()
+        .eq('comment_id', commentId)
+        .eq('user_id', currentUserId)
+      if (error) {
+        setLocalLikedCommentIds((prev) => new Set(prev).add(commentId))
+        setLocalLikeCountByComment((prev) => ({ ...prev, [commentId]: prevCount }))
+      }
+    } else {
+      const { error } = await supabase.from('comment_likes').insert({ comment_id: commentId, user_id: currentUserId })
+      if (error && error.code !== '23505') {
+        setLocalLikedCommentIds((prev) => {
+          const next = new Set(prev)
+          next.delete(commentId)
+          return next
+        })
+        setLocalLikeCountByComment((prev) => ({ ...prev, [commentId]: prevCount }))
+      }
+    }
+    setLikeTogglingId(null)
+  }
 
   const byParent = new Map<string, Comment[]>()
   comments.forEach((c) => {
@@ -75,12 +116,22 @@ export default function CommentsSection({
     byParent.get(pid)!.push(c)
   })
   const rootList = byParent.get('root') ?? []
-  const roots = [...rootList].sort((a, b) => {
-    const likesA = likeCountByComment[a.id] ?? 0
-    const likesB = likeCountByComment[b.id] ?? 0
-    if (likesB !== likesA) return likesB - likesA
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  })
+  const chronological = sortByCreated(rootList)
+  const bestRoot =
+    rootList.length === 0
+      ? null
+      : rootList.reduce<Comment | null>((best, r) => {
+          if (!best) return r
+          const likes = localLikeCountByComment[r.id] ?? 0
+          const bestLikes = localLikeCountByComment[best.id] ?? 0
+          if (likes > bestLikes) return r
+          if (likes < bestLikes) return best
+          return new Date(r.created_at).getTime() < new Date(best.created_at).getTime() ? r : best
+        }, null)
+  const roots =
+    bestRoot && chronological.length > 1
+      ? [bestRoot, ...chronological.filter((r) => r.id !== bestRoot.id)]
+      : chronological
   const participants = Array.from(
     new Set(comments.map((c) => anonMap[c.user_id]).filter(Boolean))
   ).sort()
@@ -98,8 +149,8 @@ export default function CommentsSection({
   const renderComment = (node: Comment, isRoot: boolean, isBest: boolean, isLastInGroup: boolean) => {
     const anon = anonMap[node.user_id] ?? '익명'
     const isAuthor = node.user_id === postAuthorId
-    const likeCount = likeCountByComment[node.id] ?? 0
-    const isLiked = likedCommentIds.includes(node.id)
+    const likeCount = localLikeCountByComment[node.id] ?? 0
+    const isLiked = localLikedCommentIds.has(node.id)
     const parentComment = node.parent_id ? comments.find((c) => c.id === node.parent_id) : null
     const parentAnon = parentComment ? anonMap[parentComment.user_id] ?? '익명' : null
     const parentSnippet = parentComment?.body
@@ -131,7 +182,10 @@ export default function CommentsSection({
           </AuthorMenu>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-semibold text-sm">{anon}</span>
+              {adminUserIds.includes(node.user_id) && (
+                <span className="rounded-full bg-red-500/20 text-red-500 dark:text-red-400 text-[10px] font-semibold px-1.5 py-0.5 border border-red-500/40 shrink-0">관리자</span>
+              )}
+              <span className={`font-semibold text-sm ${adminUserIds.includes(node.user_id) ? 'text-red-500 dark:text-red-400 font-bold' : ''}`}>{anon}</span>
               {isAuthor && (
                 <span className="rounded bg-[var(--spicy)]/20 text-[var(--spicy)] text-[10px] px-1.5 py-0.5">
                   작성자
@@ -152,25 +206,23 @@ export default function CommentsSection({
             )}
           </div>
           <div className="shrink-0 flex flex-col items-center gap-0.5 pt-0.5">
-            {toggleCommentLike && hasUser ? (
-              <form action={toggleCommentLike}>
-                <input type="hidden" name="commentId" value={node.id} />
-                <input type="hidden" name="postId" value={postId} />
-                <button
-                  type="submit"
-                  className={`flex flex-col items-center gap-0.5 transition-colors p-0.5 rounded ${isLiked ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground hover:text-red-500 dark:hover:text-red-400'}`}
-                  aria-label={isLiked ? '좋아요 취소' : '좋아요'}
-                >
-                  <Heart
-                    className="size-4 shrink-0"
-                    fill={isLiked ? 'currentColor' : 'none'}
-                    strokeWidth={1.5}
-                  />
-                  <span className="text-[10px] tabular-nums leading-tight">
-                    {likeCount > 0 ? likeCount : '0'}
-                  </span>
-                </button>
-              </form>
+            {hasUser ? (
+              <button
+                type="button"
+                disabled={likeTogglingId === node.id}
+                onClick={() => handleToggleCommentLike(node.id)}
+                className={`flex flex-col items-center gap-0.5 transition-colors p-0.5 rounded ${isLiked ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground hover:text-red-500 dark:hover:text-red-400'}`}
+                aria-label={isLiked ? '좋아요 취소' : '좋아요'}
+              >
+                <Heart
+                  className="size-4 shrink-0"
+                  fill={isLiked ? 'currentColor' : 'none'}
+                  strokeWidth={1.5}
+                />
+                <span className="text-[10px] tabular-nums leading-tight">
+                  {likeCount > 0 ? likeCount : '0'}
+                </span>
+              </button>
             ) : likeCount > 0 ? (
               <div className="flex flex-col items-center gap-0.5">
                 <Heart className="size-4 shrink-0 text-muted-foreground/50" fill="none" strokeWidth={1.5} />
@@ -213,17 +265,15 @@ export default function CommentsSection({
         <div className="w-0.5 h-10 bg-border shrink-0 mt-2 rounded-full min-h-[2.5rem]" aria-hidden />
         <div className="pl-3 flex-1 min-w-0">
           {parentAnon != null && (
-            <div className="text-muted-foreground text-xs pt-1 pb-0.5 min-w-0" aria-hidden>
-              <div className="flex items-center gap-1.5">
-                <Reply className="size-3 shrink-0" aria-hidden />
-                <span>{parentAnon}님에게 답글</span>
-              </div>
-              {parentSnippet && (
-                <p className="text-[11px] text-muted-foreground/90 mt-0.5 pl-4 truncate" title={parentComment?.body?.replace(/\s+/g, ' ').trim()}>
-                  「{parentSnippet}」
-                </p>
-              )}
-            </div>
+            <p className="text-muted-foreground text-xs pt-1 pb-0.5 min-w-0 flex items-center gap-1.5" aria-hidden title={parentSnippet ? `「${parentComment?.body?.replace(/\s+/g, ' ').trim() ?? ''}」` : undefined}>
+              <Reply className="size-3 shrink-0" aria-hidden />
+              <span className="truncate min-w-0">
+                {parentAnon}님에게 답글
+                {parentSnippet != null && parentSnippet !== '' && (
+                  <span className="text-muted-foreground/90"> · 「{parentSnippet}」</span>
+                )}
+              </span>
+            </p>
           )}
           {rowContent}
         </div>
@@ -246,7 +296,7 @@ export default function CommentsSection({
         const hasMoreReplies = replies.length > visibleReplyCount
         return (
           <Fragment key={root.id}>
-            {renderComment(root, true, index === 0 && (likeCountByComment[root.id] ?? 0) >= minLikes, replies.length === 0)}
+            {renderComment(root, true, index === 0 && (localLikeCountByComment[root.id] ?? 0) >= minLikes, replies.length === 0)}
             {visibleReplies.map((reply, i) =>
               renderComment(reply, false, false, i === visibleReplies.length - 1 && !hasMoreReplies)
             )}

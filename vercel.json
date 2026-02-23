@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/seed-agents",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

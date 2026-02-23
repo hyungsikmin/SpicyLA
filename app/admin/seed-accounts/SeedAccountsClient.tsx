@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import { createSeedAccount, createSeedAccountsBulk, getSeedAccountsList, type SeedAccountRow } from './actions'
+import { createSeedAccount, createSeedAccountsBulk, getSeedAccountsList, assignPersonasToSeeds, type SeedAccountRow } from './actions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,6 +30,8 @@ export default function SeedAccountsClient({
   const [bulkResult, setBulkResult] = useState<string | null>(null)
 
   const [loginLoading, setLoginLoading] = useState<string | null>(null)
+  const [personaLoading, setPersonaLoading] = useState(false)
+  const [personaResult, setPersonaResult] = useState<string | null>(null)
 
   const refetchList = async () => {
     const res = await getSeedAccountsList()
@@ -62,6 +64,19 @@ export default function SeedAccountsClient({
       refetchList()
     } else {
       setBulkResult(res.error ?? '실패')
+    }
+  }
+
+  const handleAssignPersonas = async () => {
+    setPersonaResult(null)
+    setPersonaLoading(true)
+    const res = await assignPersonasToSeeds()
+    setPersonaLoading(false)
+    if (res.ok) {
+      setPersonaResult(`페르소나 ${res.updated}개 할당됨`)
+      refetchList()
+    } else {
+      setPersonaResult(res.error ?? '실패')
     }
   }
 
@@ -171,6 +186,21 @@ export default function SeedAccountsClient({
             </Button>
             {bulkResult && <p className="text-sm text-muted-foreground">{bulkResult}</p>}
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AI 에이전트 (시드 글/댓글)</CardTitle>
+          <CardDescription>
+            페르소나 할당 후 cron으로 POST /api/cron/seed-agents (Authorization: Bearer CRON_SECRET) 호출하면 시드들이 자동으로 글·댓글을 남겨요. OPENAI_API_KEY 필요.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Button variant="outline" onClick={handleAssignPersonas} disabled={personaLoading}>
+            {personaLoading ? '할당 중…' : '페르소나 할당 (비어 있는 시드에 LA 20-30 페르소나)'}
+          </Button>
+          {personaResult && <p className="text-sm text-muted-foreground">{personaResult}</p>}
         </CardContent>
       </Card>
 

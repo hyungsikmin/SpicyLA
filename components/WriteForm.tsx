@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,15 +12,69 @@ import { Label } from '@/components/ui/label'
 const MAX_IMAGES = 3
 const POLL_OPTION_MAX_LEN = 25
 const CATEGORIES = [
-  { value: 'work', label: '💼 일' },
-  { value: 'eat', label: '🍴 먹' },
-  { value: 'home', label: '🏠 집' },
   { value: 'story', label: '🔥 썰' },
+  { value: 'love', label: '❣️ 럽' },
+  { value: 'eat', label: '🍴 먹' },
+  { value: 'work', label: '💻 일' },
+  { value: 'money', label: '💰 돈' },
+  { value: 'home', label: '🏠 집' },
+  { value: 'travel', label: '🏝️ 여' },
+  { value: 'question', label: '⁉️ 질' },
 ] as const
 const MAX_SIZE_BYTES = 5 * 1024 * 1024 // 5MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
 
+const DRAFT_KEY = 'spicy-la-write-draft'
+const DRAFT_DEBOUNCE_MS = 500
+
 type ImagePreview = { file: File; preview: string }
+
+type WriteDraft = {
+  title: string
+  body: string
+  category: string
+  isSpicy: boolean
+  addModuleType: 'none' | 'poll'
+  pollQuestion: string
+  pollOption1: string
+  pollOption2: string
+  pollOption3: string
+  pollOption4: string
+  pollOptionCount: 2 | 3 | 4
+  pollEnds24h: boolean
+  savedAt: number
+}
+
+function loadDraft(): WriteDraft | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return null
+    const d = JSON.parse(raw) as unknown
+    if (!d || typeof d !== 'object' || !('savedAt' in d)) return null
+    const savedAt = Number((d as WriteDraft).savedAt)
+    if (!Number.isFinite(savedAt)) return null
+    return d as WriteDraft
+  } catch {
+    return null
+  }
+}
+
+function saveDraft(draft: WriteDraft): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }))
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearDraft(): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem(DRAFT_KEY)
+  } catch {}
+}
 
 function getExtension(type: string): string {
   if (type === 'image/jpeg' || type === 'image/jpg') return 'jpg'
@@ -54,6 +108,57 @@ export default function WriteForm({
   const [pollOption4, setPollOption4] = useState('')
   const [pollOptionCount, setPollOptionCount] = useState<2 | 3 | 4>(2) // 2 = 찬/반, 3+ = 일반 투표
   const [pollEnds24h, setPollEnds24h] = useState(false)
+  const [restoredFromDraft, setRestoredFromDraft] = useState(false)
+  const saveDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 마운트 시 임시저장 복원
+  useEffect(() => {
+    const draft = loadDraft()
+    if (!draft) return
+    const hasContent = (draft.title ?? '').trim() !== '' || (draft.body ?? '').trim() !== ''
+    if (!hasContent) return
+    setTitle(draft.title ?? '')
+    setBody(draft.body ?? '')
+    setCategory(['story', 'love', 'eat', 'work', 'money', 'home', 'travel', 'question'].includes(draft.category ?? '') ? draft.category! : 'story')
+    setIsSpicy(Boolean(draft.isSpicy))
+    setAddModuleType(draft.addModuleType ?? 'none')
+    setPollQuestion(draft.pollQuestion ?? '')
+    setPollOption1(draft.pollOption1 ?? '')
+    setPollOption2(draft.pollOption2 ?? '')
+    setPollOption3(draft.pollOption3 ?? '')
+    setPollOption4(draft.pollOption4 ?? '')
+    setPollOptionCount(draft.pollOptionCount === 3 || draft.pollOptionCount === 4 ? draft.pollOptionCount : 2)
+    setPollEnds24h(Boolean(draft.pollEnds24h))
+    setRestoredFromDraft(true)
+  }, [])
+
+  // 입력 시 임시저장 (디바운스)
+  useEffect(() => {
+    const hasContent = title.trim() !== '' || body.trim() !== ''
+    if (!hasContent) return
+    if (saveDraftTimerRef.current) clearTimeout(saveDraftTimerRef.current)
+    saveDraftTimerRef.current = setTimeout(() => {
+      saveDraftTimerRef.current = null
+      saveDraft({
+        title,
+        body,
+        category,
+        isSpicy,
+        addModuleType,
+        pollQuestion,
+        pollOption1,
+        pollOption2,
+        pollOption3,
+        pollOption4,
+        pollOptionCount,
+        pollEnds24h,
+        savedAt: 0,
+      })
+    }, DRAFT_DEBOUNCE_MS)
+    return () => {
+      if (saveDraftTimerRef.current) clearTimeout(saveDraftTimerRef.current)
+    }
+  }, [title, body, category, isSpicy, addModuleType, pollQuestion, pollOption1, pollOption2, pollOption3, pollOption4, pollOptionCount, pollEnds24h])
 
   const addImages = (files: FileList | null) => {
     if (!files?.length) return
@@ -113,7 +218,7 @@ export default function WriteForm({
         return
       }
     }
-    const cat = ['work', 'eat', 'home', 'story'].includes(category) ? category : 'story'
+    const cat = ['story', 'love', 'eat', 'work', 'money', 'home', 'travel', 'question'].includes(category) ? category : 'story'
     setError(null)
     setSubmitting(true)
 
@@ -163,6 +268,8 @@ export default function WriteForm({
       if (optCount === 2) {
         const { error: proconErr } = await supabase.from('post_procon').insert({
           post_id: postId,
+          pro_label: (pollOption1.trim() || '찬').slice(0, POLL_OPTION_MAX_LEN),
+          con_label: (pollOption2.trim() || '반').slice(0, POLL_OPTION_MAX_LEN),
         })
         if (proconErr) {
           setSubmitting(false)
@@ -189,6 +296,7 @@ export default function WriteForm({
     }
 
     setSubmitting(false)
+    clearDraft()
     onSuccess()
   }
 
@@ -205,6 +313,33 @@ export default function WriteForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {restoredFromDraft && (
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+          <span>임시저장된 글이 있어 불러왔어요. 이미지는 다시 넣어 주세요.</span>
+          <button
+            type="button"
+            onClick={() => {
+              clearDraft()
+              setTitle('')
+              setBody('')
+              setCategory('story')
+              setIsSpicy(false)
+              setAddModuleType('none')
+              setPollQuestion('')
+              setPollOption1('')
+              setPollOption2('')
+              setPollOption3('')
+              setPollOption4('')
+              setPollOptionCount(2)
+              setPollEnds24h(false)
+              setRestoredFromDraft(false)
+            }}
+            className="shrink-0 text-foreground/80 hover:text-foreground underline"
+          >
+            새로 쓰기
+          </button>
+        </div>
+      )}
       <div className="space-y-2">
         <Label htmlFor="write-title">제목 *</Label>
         <Input

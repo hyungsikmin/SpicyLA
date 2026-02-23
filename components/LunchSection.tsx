@@ -3,6 +3,7 @@
 import type { User } from '@supabase/supabase-js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import {
   fetchLunchSettings,
@@ -14,6 +15,7 @@ import {
   getYesterdayWinner,
   getLast7DaysWinnerMenus,
   getLunchHallOfFame,
+  getWinnerRecommendationByDate,
   isRoundPastDeadline,
   type LunchRound,
   type LunchSettings,
@@ -27,38 +29,6 @@ import { userAvatarEmoji } from '@/lib/postAvatar'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 
 const VOTE_LABELS: Record<string, string> = { want: '가고싶다', unsure: '애매', wtf: '뭐야이건' }
-
-/** 지난 5일 날짜 (오늘 제외, 1일전~5일전) */
-function getLast5RoundDates(): string[] {
-  const out: string[] = []
-  for (let i = 1; i <= 5; i++) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    out.push(d.toISOString().slice(0, 10))
-  }
-  return out
-}
-const DUMMY_LAST5_RESTAURANTS = [
-  { restaurant_name: 'BCD Tofu House', anon_name: '익명의왕' },
-  { restaurant_name: 'Kang Ho-dong Baekjeong', anon_name: '맛집러버' },
-  { restaurant_name: 'Sun Nong Dan', anon_name: '치즈폭포' },
-  { restaurant_name: 'Hae Jang Chon', anon_name: '고기덕후' },
-  { restaurant_name: 'Myung Dong Kyoja', anon_name: '칼국수' },
-]
-function getDummyLast5Winners(): Last7DaysWinnerEntry[] {
-  const dates = getLast5RoundDates()
-  return dates.map((round_date, i) => ({
-    round_date,
-    restaurant_name: DUMMY_LAST5_RESTAURANTS[i]?.restaurant_name ?? '맛집',
-    anon_name: DUMMY_LAST5_RESTAURANTS[i]?.anon_name ?? '익명',
-    link_url: null,
-  }))
-}
-const DUMMY_HALL_OF_FAME: HallOfFameEntry[] = [
-  { user_id: 'dummy-1', anon_name: '점메추왕', win_count: 5 },
-  { user_id: 'dummy-2', anon_name: '맛집탐험가', win_count: 3 },
-  { user_id: 'dummy-3', anon_name: '오늘뭐먹지', win_count: 2 },
-]
 
 function formatRoundDate(roundDate: string): string {
   const [y, m, d] = roundDate.split('-').map(Number)
@@ -221,6 +191,9 @@ export default function LunchSection({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [votingId, setVotingId] = useState<string | null>(null)
+  const [winnerPopupOpen, setWinnerPopupOpen] = useState(false)
+  const [winnerPopupData, setWinnerPopupData] = useState<RecommendationWithMeta | null>(null)
+  const [winnerPopupLoading, setWinnerPopupLoading] = useState(false)
   const LUNCH_REC_PREVIEW = 3
 
   // 마운트 시 한 번만 실행. user 변경 시 라운드 재조회하지 않아서
@@ -438,7 +411,9 @@ export default function LunchSection({
                     <span aria-hidden>🏆</span> 명예의 전당
                   </p>
                   <ul className="space-y-2">
-                    {((hallOfFameProp?.length ? hallOfFameProp : hallOfFame.length > 0 ? hallOfFame : DUMMY_HALL_OF_FAME)).slice(0, 3).map((entry, i) => {
+                    {((hallOfFameProp?.length ? hallOfFameProp : hallOfFame).slice(0, 3).length === 0) ? (
+                      <li className="text-xs text-muted-foreground py-1">아직 없어요</li>
+                    ) : (hallOfFameProp?.length ? hallOfFameProp : hallOfFame).slice(0, 3).map((entry, i) => {
                       const avatarUrl = feedAvatarMap?.[entry.user_id] ?? ('avatar_url' in entry ? entry.avatar_url : null)
                       return (
                       <li key={entry.user_id + String(i)} className="flex items-center gap-2.5">
@@ -465,25 +440,53 @@ export default function LunchSection({
 <div className="rounded-lg bg-card/50 px-3 py-2 text-sm">
                 <p className="text-muted-foreground text-xs font-medium mb-1.5">지난 5일 점메추 1위</p>
                   <ul className="space-y-1 text-xs">
-                    {(last7DaysWinners.length > 0
-                      ? last7DaysWinners.filter((e) => e.round_date !== todayRound?.round_date).slice(0, 5)
-                      : getDummyLast5Winners()
-                    ).map((entry, idx) => {
+                    {(() => {
+                      const last5 = last7DaysWinners.filter((e) => e.round_date !== todayRound?.round_date).slice(0, 5)
+                      if (last5.length === 0) return <li className="text-muted-foreground py-0.5">아직 없어요</li>
+                      return last5.map((entry, idx) => {
                       const dateLabel = formatRoundDateShort(entry.round_date)
-                      const roundHref = `${pathname ?? '/'}?lunch_date=${entry.round_date}`
+                      const postHref = entry.link_url?.trim()?.startsWith('/p/') ? entry.link_url.trim() : null
+                      const rowContent = (
+                        <>
+                          <span className="shrink-0 text-muted-foreground">{dateLabel}</span>
+                          <span className="text-foreground truncate min-w-0 flex-1">{entry.restaurant_name}</span>
+                          <span className="shrink-0 text-muted-foreground">({entry.anon_name})</span>
+                        </>
+                      )
+                      const handleClick = async (e: React.MouseEvent) => {
+                        if (postHref) {
+                          // 포스트 링크가 있으면 그대로 이동
+                          return
+                        }
+                        e.preventDefault()
+                        setWinnerPopupLoading(true)
+                        setWinnerPopupOpen(true)
+                        const winnerData = await getWinnerRecommendationByDate(entry.round_date)
+                        setWinnerPopupData(winnerData)
+                        setWinnerPopupLoading(false)
+                      }
                       return (
                         <li key={entry.round_date + String(idx)}>
-                          <a
-                            href={roundHref}
-                            className="flex items-center gap-1.5 truncate rounded hover:bg-muted/50 transition-colors py-0.5 -mx-1 px-1"
-                          >
-                            <span className="shrink-0 text-muted-foreground">{dateLabel}</span>
-                            <span className="text-foreground truncate min-w-0 flex-1">{entry.restaurant_name}</span>
-                            <span className="shrink-0 text-muted-foreground">({entry.anon_name})</span>
-                          </a>
+                          {postHref ? (
+                            <Link
+                              href={postHref}
+                              className="flex items-center gap-1.5 truncate rounded hover:bg-muted/50 transition-colors py-0.5 -mx-1 px-1"
+                            >
+                              {rowContent}
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleClick}
+                              className="flex items-center gap-1.5 truncate rounded hover:bg-muted/50 transition-colors py-0.5 -mx-1 px-1 w-full text-left"
+                            >
+                              {rowContent}
+                            </button>
+                          )}
                         </li>
                       )
-                    })}
+                    });
+                    })()}
                   </ul>
                 </div>
               </div>
@@ -510,7 +513,134 @@ export default function LunchSection({
           setVotingId={setVotingId}
         />
       )}
+
+      {winnerPopupOpen && (
+        <WinnerPopup
+          recommendation={winnerPopupData}
+          loading={winnerPopupLoading}
+          onClose={() => {
+            setWinnerPopupOpen(false)
+            setWinnerPopupData(null)
+          }}
+        />
+      )}
     </>
+  )
+}
+
+function WinnerPopup({
+  recommendation,
+  loading,
+  onClose,
+}: {
+  recommendation: RecommendationWithMeta | null
+  loading: boolean
+  onClose: () => void
+}) {
+  const { restaurant_name, one_line_reason, link_url, want_count, unsure_count, wtf_count, anon_name } = recommendation || {}
+  const href = link_url?.trim() ? (link_url.startsWith('http') ? link_url : `https://${link_url}`) : null
+  const [ogImageUrl, setOgImageUrl] = useState<string | null>(() => {
+    if (typeof window === 'undefined' || !href) return null
+    try {
+      return localStorage.getItem(`lunch_og:${href}`) || null
+    } catch {
+      return null
+    }
+  })
+  const [ogImageFailed, setOgImageFailed] = useState(false)
+  useEffect(() => {
+    if (!href) {
+      setOgImageUrl(null)
+      setOgImageFailed(false)
+      return
+    }
+    try {
+      const cached = localStorage.getItem(`lunch_og:${href}`)
+      if (cached) {
+        setOgImageUrl(cached)
+        setOgImageFailed(false)
+        return
+      }
+    } catch {
+      /* ignore */
+    }
+    setOgImageUrl(null)
+    setOgImageFailed(false)
+    const encoded = encodeURIComponent(href)
+    fetch(`/api/og?url=${encoded}`)
+      .then((r) => r.json())
+      .then((data: { imageUrl?: string | null }) => {
+        if (data.imageUrl) {
+          setOgImageUrl(data.imageUrl)
+          try {
+            localStorage.setItem(`lunch_og:${href}`, data.imageUrl)
+          } catch {
+            /* ignore */
+          }
+        }
+      })
+      .catch(() => setOgImageFailed(true))
+  }, [href])
+  const showDummy = !ogImageUrl || ogImageFailed
+  const imageLoading = !!href && !ogImageUrl && !ogImageFailed
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+      <div
+        className="bg-background border border-border rounded-2xl w-full max-w-md overflow-hidden shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {loading ? (
+          <div className="p-8 text-center text-muted-foreground">로딩 중...</div>
+        ) : !recommendation ? (
+          <div className="p-8 text-center text-muted-foreground">정보를 불러올 수 없어요.</div>
+        ) : (
+          <div className="flex flex-row">
+            <div className="flex-1 min-w-0 p-4 flex flex-col justify-center">
+              <p className="font-semibold text-foreground text-base mb-1">{anon_name}</p>
+              <p className="text-sm text-foreground mb-2">{one_line_reason}</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                🔥 {want_count} · 🤔 {unsure_count} · 😂 {wtf_count}
+              </p>
+              {href && (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+                >
+                  링크 <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+            <div className="relative w-32 shrink-0 aspect-square bg-muted overflow-hidden">
+              {imageLoading ? (
+                <div className="absolute inset-0 bg-muted-foreground/10 animate-pulse" aria-hidden />
+              ) : showDummy ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-amber-400/20 to-orange-300/10 dark:from-amber-500/15 dark:to-orange-400/10">
+                  <span className="text-2xl opacity-80">🍽️</span>
+                </div>
+              ) : (
+                <img
+                  key={ogImageUrl ?? 'img'}
+                  src={ogImageUrl!}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={() => setOgImageFailed(true)}
+                />
+              )}
+            </div>
+          </div>
+        )}
+        <div className="border-t border-border p-3 flex justify-end">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            닫기
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -41,37 +41,44 @@ export default function ReactionButtons({
   const [loading, setLoading] = useState(false)
 
   const handleToggle = async (type: ReactionType) => {
-    if (!hasUser) return
+    if (!hasUser || loading) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    setLoading(true)
     const had = userTypes.has(type)
+    const prevCount = counts[type] ?? 0
+    setLoading(true)
     if (had) {
+      setUserTypes((prev) => {
+        const next = new Set(prev)
+        next.delete(type)
+        return next
+      })
+      setCounts((prev) => ({ ...prev, [type]: Math.max(0, (prev[type] ?? 0) - 1) }))
       const { error } = await supabase
         .from('post_reactions')
         .delete()
         .eq('post_id', postId)
         .eq('user_id', user.id)
         .eq('reaction_type', type)
-      if (!error) {
-        setUserTypes((prev) => {
-          const next = new Set(prev)
-          next.delete(type)
-          return next
-        })
-        setCounts((prev) => ({ ...prev, [type]: Math.max(0, (prev[type] ?? 0) - 1) }))
+      if (error) {
+        setUserTypes((prev) => new Set(prev).add(type))
+        setCounts((prev) => ({ ...prev, [type]: prevCount }))
       }
     } else {
+      setUserTypes((prev) => new Set(prev).add(type))
+      setCounts((prev) => ({ ...prev, [type]: (prev[type] ?? 0) + 1 }))
       const { error } = await supabase.from('post_reactions').insert({
         post_id: postId,
         user_id: user.id,
         reaction_type: type,
       })
-      if (!error) {
-        setUserTypes((prev) => new Set(prev).add(type))
-        setCounts((prev) => ({ ...prev, [type]: (prev[type] ?? 0) + 1 }))
-      } else if (error.code === '23505') {
-        setUserTypes((prev) => new Set(prev).add(type))
+      if (error && error.code !== '23505') {
+        setUserTypes((prev) => {
+          const next = new Set(prev)
+          next.delete(type)
+          return next
+        })
+        setCounts((prev) => ({ ...prev, [type]: prevCount }))
       }
     }
     setLoading(false)
