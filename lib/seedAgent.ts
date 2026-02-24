@@ -144,9 +144,11 @@ export type RunAgentResult =
   | { ok: true; action: 'comment'; commentId: string; postId: string }
   | { ok: true; action: 'reaction'; postId: string; reactionType: string }
   | { ok: true; action: 'poll_vote'; postId: string; optionIndex: number }
+  | { ok: true; action: 'procon_vote'; postId: string; side: 'pro' | 'con' }
+  | { ok: true; action: 'comment_like'; commentId: string }
   | { ok: false; error: string }
 
-/** 시드 한 명에 대해 로그인 → 투표 / 댓글 / 리액션 중 하나 수행. (비율: 투표 50%, 리액션 35%, 댓글 15%) */
+/** 시드 한 명에 대해 로그인 → 리액션 40% / 투표 30% / 댓글 하트 30% 중 하나 수행. */
 export async function runOneSeedAgent(seed: SeedWithPersona): Promise<RunAgentResult> {
   if (!SEED_PASSWORD || !OPENAI_API_KEY) {
     return { ok: false, error: 'SEED_ACCOUNT_PASSWORD or OPENAI_API_KEY missing' }
@@ -157,10 +159,11 @@ export async function runOneSeedAgent(seed: SeedWithPersona): Promise<RunAgentRe
 
   const admin = getSupabaseAdmin()
   const r = Math.random()
-  const doPost = false // 포스팅 비활성화: 댓글+리액션+투표만 운영
-  const doVote = r < 0.5
-  const doComment = false // 댓글 비활성화
-  // r >= 0.5 → 리액션 (리액션 50%, 투표 50%)
+  const doPost = false
+  const doVote = r >= 0.4 && r < 0.7       // 30%
+  const doCommentLike = r >= 0.7           // 30% — 댓글 하트
+  const doComment = false                 // 댓글 작성 비활성화 (하트만 사용)
+  // r < 0.4 → 리액션 40%
 
   if (doPost) {
     const { data: recent } = await admin
@@ -182,21 +185,36 @@ export async function runOneSeedAgent(seed: SeedWithPersona): Promise<RunAgentRe
 
   if (doVote) {
     const now = new Date().toISOString()
-    const { data: pollRows } = await admin
-      .from('post_polls')
-      .select('post_id, option_1, option_2, option_3, option_4, ends_at')
-      .or(`ends_at.is.null,ends_at.gte.${now}`)
-    const pollPostIds = (pollRows ?? []).map((r: { post_id: string }) => r.post_id)
-    if (pollPostIds.length > 0) {
-      const { data: myVotes } = await admin
-        .from('post_poll_votes')
-        .select('post_id')
-        .eq('user_id', user.id)
-        .in('post_id', pollPostIds)
-      const votedSet = new Set((myVotes ?? []).map((v: { post_id: string }) => v.post_id))
-      const available = (pollRows ?? []).filter((row: { post_id: string }) => !votedSet.has(row.post_id)) as { post_id: string; option_1: string; option_2: string; option_3?: string | null; option_4?: string | null }[]
-      if (available.length > 0) {
-        const row = available[Math.floor(Math.random() * available.length)]!
+    const { data: visiblePosts } = await admin.from('posts').select('id').eq('status', 'visible').limit(500)
+    const visiblePostIds = (visiblePosts ?? []).map((p: { id: string }) => p.id)
+    if (visiblePostIds.length === 0) {
+      // no visible posts → skip vote block, fall through to reaction
+    } else {
+      const [pollRes, proconRes] = await Promise.all([
+        admin.from('post_polls').select('post_id, option_1, option_2, option_3, option_4, ends_at').in('post_id', visiblePostIds).or(`ends_at.is.null,ends_at.gte.${now}`),
+        admin.from('post_procon').select('post_id').in('post_id', visiblePostIds),
+      ])
+      const pollRows = (pollRes.data ?? []) as { post_id: string; option_1: string; option_2: string; option_3?: string | null; option_4?: string | null }[]
+      const proconRows = (proconRes.data ?? []) as { post_id: string }[]
+    const pollPostIds = pollRows.map((r) => r.post_id)
+    const proconPostIds = proconRows.map((r) => r.post_id)
+    const [myPollVotes, myProconVotes] = await Promise.all([
+      pollPostIds.length > 0 ? admin.from('post_poll_votes').select('post_id').eq('user_id', user.id).in('post_id', pollPostIds) : { data: [] },
+      proconPostIds.length > 0 ? admin.from('post_procon_votes').select('post_id').eq('user_id', user.id).in('post_id', proconPostIds) : { data: [] },
+    ])
+    const votedPollSet = new Set((myPollVotes.data ?? []).map((v: { post_id: string }) => v.post_id))
+    const votedProconSet = new Set((myProconVotes.data ?? []).map((v: { post_id: string }) => v.post_id))
+    const availablePolls = pollRows.filter((row) => !votedPollSet.has(row.post_id))
+    const availableProcons = proconRows.filter((row) => !votedProconSet.has(row.post_id))
+    type PollChoice = { type: 'poll'; row: (typeof availablePolls)[number] }
+    type ProconChoice = { type: 'procon'; post_id: string }
+    const choices: PollChoice[] = availablePolls.map((row) => ({ type: 'poll', row }))
+    const proconChoices: ProconChoice[] = availableProcons.map((row) => ({ type: 'procon', post_id: row.post_id }))
+    const allChoices: (PollChoice | ProconChoice)[] = [...choices, ...proconChoices]
+    if (allChoices.length > 0) {
+      const picked = allChoices[Math.floor(Math.random() * allChoices.length)]!
+      if (picked.type === 'poll') {
+        const row = picked.row
         const optionCount = [row.option_1, row.option_2, row.option_3, row.option_4].filter(Boolean).length
         const optionIndex = Math.floor(Math.random() * optionCount)
         const { error: voteErr } = await supabase
@@ -204,8 +222,46 @@ export async function runOneSeedAgent(seed: SeedWithPersona): Promise<RunAgentRe
           .insert({ post_id: row.post_id, user_id: user.id, option_index: optionIndex })
         if (!voteErr) return { ok: true, action: 'poll_vote', postId: row.post_id, optionIndex }
         if (voteErr.code !== '23505') return { ok: false, error: voteErr.message }
+      } else {
+        const side = Math.random() < 0.5 ? 'pro' : 'con'
+        const { error: proconErr } = await supabase
+          .from('post_procon_votes')
+          .insert({ post_id: picked.post_id, user_id: user.id, side })
+        if (!proconErr) return { ok: true, action: 'procon_vote', postId: picked.post_id, side }
+        if (proconErr.code !== '23505') return { ok: false, error: proconErr.message }
       }
     }
+    }
+  }
+
+  if (doCommentLike) {
+    const { data: posts } = await admin.from('posts').select('id').eq('status', 'visible').limit(200)
+    const postIds = (posts ?? []).map((p: { id: string }) => p.id)
+    if (postIds.length > 0) {
+      const { data: comments } = await admin
+        .from('comments')
+        .select('id')
+        .in('post_id', postIds)
+      const commentIds = (comments ?? []).map((c: { id: string }) => c.id)
+      if (commentIds.length > 0) {
+        const { data: myLikes } = await admin
+          .from('comment_likes')
+          .select('comment_id')
+          .eq('user_id', user.id)
+          .in('comment_id', commentIds)
+        const likedSet = new Set((myLikes ?? []).map((l: { comment_id: string }) => l.comment_id))
+        const available = commentIds.filter((id: string) => !likedSet.has(id))
+        if (available.length > 0) {
+          const commentId = available[Math.floor(Math.random() * available.length)]!
+          const { error: likeErr } = await supabase
+            .from('comment_likes')
+            .insert({ comment_id: commentId, user_id: user.id })
+          if (!likeErr) return { ok: true, action: 'comment_like', commentId }
+        }
+      }
+    }
+    // 하트 누를 댓글 없으면 리액션으로 넘어가지 않고 여기서 종료 (30%가 reaction으로 잡아먹히지 않도록)
+    return { ok: false, error: 'no comments to like' }
   }
 
   if (doComment) {
@@ -274,4 +330,26 @@ export async function runOneSeedAgent(seed: SeedWithPersona): Promise<RunAgentRe
     return { ok: false, error: error.message }
   }
   return { ok: false, error: 'could not add reaction (all already reacted?)' }
+}
+
+const LUNCH_VOTE_TYPES = ['want', 'unsure', 'wtf'] as const
+
+/** 시드 한 명으로 점메추 추천 1건에 리액션(투표) 1개 넣기. 이미 투표한 시드는 호출하지 말 것. */
+export async function runOneLunchVote(
+  seed: SeedWithPersona,
+  recommendationId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!SEED_PASSWORD) return { ok: false, error: 'SEED_ACCOUNT_PASSWORD missing' }
+  const auth = await supabaseAsSeed(seed.email)
+  if (!auth) return { ok: false, error: 'seed login failed' }
+  const { supabase, user } = auth
+  const voteType = LUNCH_VOTE_TYPES[Math.floor(Math.random() * LUNCH_VOTE_TYPES.length)]!
+  const { error } = await supabase.from('lunch_votes').insert({
+    recommendation_id: recommendationId,
+    user_id: user.id,
+    vote_type: voteType,
+  })
+  if (!error) return { ok: true }
+  if (error.code === '23505') return { ok: false, error: 'already voted' }
+  return { ok: false, error: error.message }
 }

@@ -24,30 +24,37 @@ npx supabase db push
 
 ## Cron으로 에이전트 실행
 
-매 실행 시 **2~3명**의 시드를 랜덤 선택해, 각각 **글 1개** 또는 **댓글 1개**를 생성합니다.
+매 실행 시 **20명**의 시드를 랜덤 선택해, 각각 **투표** 또는 **리액션**을 수행합니다.
+
+**수동 호출 (테스트):**
 
 ```bash
-curl -X POST "https://your-app.vercel.app/api/cron/seed-agents" \
-  -H "Authorization: Bearer YOUR_CRON_SECRET"
+curl -s "https://spicy-la.vercel.app/api/cron/seed-agents?secret=YOUR_CRON_SECRET"
 ```
 
-또는 쿼리 파라미터:
+또는 Authorization 헤더:
 
+```bash
+curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" "https://spicy-la.vercel.app/api/cron/seed-agents"
 ```
-POST /api/cron/seed-agents?secret=YOUR_CRON_SECRET
-```
 
-**Vercel Cron** 사용 시 프로젝트 루트에 `vercel.json`이 있으며, **10분마다** 실행되도록 설정되어 있음:
+**10분마다 자동 실행 — [cron-job.org](https://cron-job.org) 사용:**
 
-- `schedule`: `*/10 * * * *` (10분마다, UTC 기준)
-- **중요**: Vercel은 크론을 **GET** 요청으로 호출함. 라우트에서 GET을 처리해야 10분마다 실제로 동작함.
-- Vercel 프로젝트에 **CRON_SECRET** 환경 변수 설정 (Production). Vercel이 `Authorization: Bearer <CRON_SECRET>` 를 붙여주지 않는 경우에도, User-Agent `vercel-cron/1.0` 인 GET은 인증 통과하도록 되어 있음.
-- 크론은 **Production 배포**에만 동작함. Preview 배포에서는 실행되지 않음.
+1. [cron-job.org](https://cron-job.org) 가입 후 로그인
+2. **Create cronjob** → **Title**: `spicy-la seed agents` (아무 이름)
+3. **Address (URL):**  
+   `https://spicy-la.vercel.app/api/cron/seed-agents?secret=여기에_Vercel에_설정한_CRON_SECRET_값`
+4. **Schedule:** Every 10 minutes (또는 `*/10 * * * *`)
+5. **Request method:** GET
+6. 저장 후 활성화
+
+Vercel에는 크론 설정 없음. 배포만 하면 되고, 실제 호출은 cron-job.org가 10분마다 GET으로 보냄.
 
 ## 동작 요약
 
-- 시드로 로그인 → RLS 통과하여 `comments` / `post_reactions` / `post_poll_votes` insert (글 생성은 비활성화)
-- **투표** (50%): 아직 투표하지 않은 폴 글이 있으면 옵션 중 하나에 투표
-- **리액션** (50%): 남의 글(본인 글 제외)에 🤣😡🤯👀🌶️ 중 하나로 반응
-- **댓글**: 비활성화
+- 시드로 로그인 → RLS 통과하여 `comment_likes` / `post_reactions` / `post_poll_votes` insert (글·댓글 작성은 비활성화)
+- **리액션** (40%): 남의 글(본인 글 제외)에 🤣😡🤯👀🌶️ 중 하나로 반응
+- **투표** (30%): 아직 투표하지 않은 폴 글이 있으면 옵션 중 하나에 투표
+- **댓글 하트** (30%): 아직 하트 안 누른 댓글에 좋아요
+- **점메추 리액션**: 같은 실행에서, 오늘 점메추에 올라간 추천 아이템마다 아직 투표 안 한 시드 1명이 want/unsure/wtf 중 하나로 1표 투표
 - 페르소나 100종: LA 20-30대 남/여, 말투 다양 (캐주얼·심한 구어체·욕·비꼼·놀림 허용된 인물 포함)

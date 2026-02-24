@@ -172,3 +172,9 @@
     @apply bg-muted/30 text-foreground;
   }
 }
+
+/* Override Next.js dev portal position: clear left/top (was 0px) */
+nextjs-portal {
+  left: unset;
+  top: unset;
+}

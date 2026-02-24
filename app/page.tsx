@@ -21,6 +21,8 @@ import PollBlock, { type PollData } from '@/components/PollBlock'
 import ProconBar from '@/components/ProconBar'
 import BannerAd from '@/components/BannerAd'
 import { getSwitchSeedAccountLink } from '@/app/actions/switchSeedAccount'
+import SiriOrb from '@/components/smoothui/siri-orb'
+import AnimatedAvatarGroup, { type AvatarData } from '@/components/ui/smoothui/animated-avatar-group'
 
 type Post = {
   id: string
@@ -60,7 +62,20 @@ function isTodayLA(isoDateStr: string): boolean {
   const today = new Date()
   return d.toLocaleDateString('en-CA', { timeZone: LA_TZ }) === today.toLocaleDateString('en-CA', { timeZone: LA_TZ })
 }
-const TODAY_PHRASES = ['오늘도 노빠꾸', 'LA 20·30과 함께', '오늘 하루도 화이팅', '같이 올려봐요']
+const EMOJI_AVATAR_BG: Record<string, string> = {
+  'bg-[#fef3c7]': '#fef3c7',
+  'bg-[#fce7f3]': '#fce7f3',
+  'bg-[#d1fae5]': '#d1fae5',
+  'bg-[#dbeafe]': '#dbeafe',
+  'bg-[#e9d5ff]': '#e9d5ff',
+  'bg-[#ffedd5]': '#ffedd5',
+}
+function makeEmojiAvatarDataUrl(userId: string, colorClass: string): string {
+  const emoji = userAvatarEmoji(userId)
+  const bg = EMOJI_AVATAR_BG[colorClass] || '#f3f4f6'
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="18" fill="${bg}"/><text x="18" y="22" font-size="18" text-anchor="middle">${emoji}</text></svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
 // 자영업 섹션과 비슷한 채도 (from-red-500/8 수준)
 const TRENDING_GRADIENT = 'bg-gradient-to-b from-red-500/8 to-transparent dark:from-red-500/6 dark:to-transparent'
 const BUSINESS_GRADIENT = 'bg-gradient-to-b from-pink-400/8 via-purple-400/6 to-transparent dark:from-pink-500/6 dark:to-transparent'
@@ -623,7 +638,7 @@ function HomePageInner() {
   const [fakeTypingCount, setFakeTypingCount] = useState(0)
   const [lunchParticipantCount, setLunchParticipantCount] = useState<number | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
-  const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post' | 'poll_vote' | 'procon_vote'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string; proconSide?: 'pro' | 'con' } | null>(null)
+  const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post' | 'poll_vote' | 'procon_vote' | 'comment_like'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string; proconSide?: 'pro' | 'con' } | null>(null)
   const [notificationKey, setNotificationKey] = useState(0)
   const [dark, setDark] = useState(false)
   const [writeOpen, setWriteOpen] = useState(false)
@@ -648,6 +663,8 @@ function HomePageInner() {
   })
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [popularMembers, setPopularMembers] = useState<Array<{ user_id: string; anon_name: string; avatar_url: string | null; colorClass: string }>>([])
+  const [topActiveAvatars, setTopActiveAvatars] = useState<AvatarData[]>([])
+  const [totalMemberCount, setTotalMemberCount] = useState(0)
   const [businessSpotlight, setBusinessSpotlight] = useState<Array<{ id: string; business_name: string; one_liner: string | null; link_url: string | null; instagram_url: string | null; media_path: string | null; media_type: string | null }>>([])
   const [isAdmin, setIsAdmin] = useState(false)
   const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
@@ -677,6 +694,8 @@ function HomePageInner() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const hasLoadedOnceRef = useRef(false)
   const savedScrollRef = useRef<number | null>(null)
+  const [topNavVisible, setTopNavVisible] = useState(true)
+  const [bottomNavVisible, setBottomNavVisible] = useState(true)
 
   useEffect(() => {
     const source = [...posts, ...trendingPostsData]
@@ -690,28 +709,35 @@ function HomePageInner() {
 
   /** 카테고리 칼럼 8개 → 4x2 그리드 (썰 럽 먹 일 / 돈 집 여 질) */
   const CATEGORY_COLUMN_IDS = ['story', 'love', 'eat', 'work', 'money', 'home', 'travel', 'question'] as const
+  // categoryColumns effect는 fetchCountsAndThumbnails 선언 이후에 배치 (아래)
+
   useEffect(() => {
-    let cancelled = false
-    const fetchCategoryColumns = async () => {
-      const results = await Promise.all(
-        CATEGORY_COLUMN_IDS.map(async (catId) => {
-          const { data } = await supabase
-            .from('posts')
-            .select('id, user_id, title, body, is_spicy, created_at, category')
-            .eq('category', catId)
-            .eq('status', 'visible')
-            .order('created_at', { ascending: false })
-            .limit(5)
-          return { catId, posts: (data ?? []) as Post[] }
-        })
-      )
-      if (cancelled) return
-      const next: Record<string, Post[]> = {}
-      results.forEach(({ catId, posts }) => { next[catId] = posts })
-      setCategoryColumnPosts(next)
+    let lastY = window.scrollY
+    let downAccum = 0
+    let upAccum = 0
+    const THRESHOLD = 30
+
+    const onScroll = () => {
+      const y = window.scrollY
+      const diff = y - lastY
+      lastY = y
+
+      if (diff > 0) {
+        // 아래로 스크롤
+        upAccum = 0           // 반대방향 누적 초기화
+        downAccum += diff
+        if (downAccum >= THRESHOLD) setTopNavVisible(false)
+        setBottomNavVisible(true)  // 하단 네비는 즉시 표시
+      } else if (diff < 0) {
+        // 위로 스크롤
+        downAccum = 0         // 반대방향 누적 초기화
+        upAccum += -diff
+        if (upAccum >= THRESHOLD) setBottomNavVisible(false)
+        setTopNavVisible(true)    // 상단 네비는 즉시 표시
+      }
     }
-    fetchCategoryColumns()
-    return () => { cancelled = true }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
   const todayPostCount = useMemo(() => {
@@ -719,8 +745,6 @@ function HomePageInner() {
     const todayIds = new Set(source.filter((p) => isTodayLA(p.created_at)).map((p) => p.id))
     return todayIds.size
   }, [posts, trendingPostsData])
-
-  const todayPhrase = useMemo(() => TODAY_PHRASES[new Date().getDay() % TODAY_PHRASES.length], [])
 
   useEffect(() => {
     getTodayLunchParticipantCount().then(setLunchParticipantCount)
@@ -824,6 +848,33 @@ function HomePageInner() {
             postId: v.post_id,
             text: `${profileMap.get(v.user_id) || '익명'}님이 ${snippet ? `${snippet}에 ` : ''}투표를 택했어요`,
             created_at: v.created_at,
+          })
+        }
+      }
+
+      // 최근 댓글 하트
+      const { data: recentCommentLikes } = await supabase
+        .from('comment_likes')
+        .select('comment_id, user_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      if (recentCommentLikes && recentCommentLikes.length > 0) {
+        const commentIds = [...new Set((recentCommentLikes as { comment_id: string }[]).map((l) => l.comment_id))]
+        const { data: commentRows } = await supabase.from('comments').select('id, post_id').in('id', commentIds)
+        const postIdByCommentId = new Map((commentRows ?? []).map((c: { id: string; post_id: string }) => [c.id, c.post_id]))
+        const userIds = [...new Set((recentCommentLikes as { user_id: string }[]).map((l) => l.user_id))]
+        const { data: profiles } = userIds.length > 0
+          ? await supabase.from('profiles').select('user_id, anon_name').in('user_id', userIds)
+          : { data: [] }
+        const profileMap = new Map((profiles ?? []).map((p: { user_id: string; anon_name: string | null }) => [p.user_id, p.anon_name?.trim() || '익명']))
+        for (const like of recentCommentLikes) {
+          const l = like as { comment_id: string; user_id: string; created_at: string }
+          const postId = postIdByCommentId.get(l.comment_id)
+          if (!postId) continue
+          all.push({
+            postId,
+            text: `${profileMap.get(l.user_id) || '익명'}님이 댓글에 하트를 눌렀어요`,
+            created_at: l.created_at,
           })
         }
       }
@@ -951,6 +1002,54 @@ function HomePageInner() {
     load()
   }, [siteSettings?.popular_members_count, siteSettings?.popular_members_min_score])
 
+  useEffect(() => {
+    const load = async () => {
+      const [{ count }, { data: postsData }] = await Promise.all([
+        supabase.from('profiles').select('user_id', { count: 'exact', head: true }),
+        supabase.from('posts').select('id, user_id').eq('status', 'visible').order('created_at', { ascending: false }).limit(500),
+      ])
+      setTotalMemberCount(count ?? 0)
+      if (!postsData?.length) return
+      const postIds = postsData.map((p) => p.id)
+      const postIdToUserId = new Map(postsData.map((p) => [p.id, p.user_id]))
+      const [reactionsRes, commentsRes] = await Promise.all([
+        supabase.from('post_reactions').select('post_id').in('post_id', postIds),
+        supabase.from('comments').select('user_id').in('post_id', postIds),
+      ])
+      const scoreByUser: Record<string, number> = {}
+      postsData.forEach((p) => { scoreByUser[p.user_id] = (scoreByUser[p.user_id] ?? 0) + 1 })
+      ;(reactionsRes.data ?? []).forEach((r: { post_id: string }) => {
+        const uid = postIdToUserId.get(r.post_id)
+        if (uid) scoreByUser[uid] = (scoreByUser[uid] ?? 0) + 1
+      })
+      ;(commentsRes.data ?? []).forEach((c: { user_id: string }) => {
+        scoreByUser[c.user_id] = (scoreByUser[c.user_id] ?? 0) + 1
+      })
+      const topIds = Object.entries(scoreByUser)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([uid]) => uid)
+      if (!topIds.length) return
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('user_id, anon_name, avatar_path, profile_color_index')
+        .in('user_id', topIds)
+      const order = new Map(topIds.map((id, i) => [id, i]))
+      const avatarList: AvatarData[] = (profiles ?? [])
+        .sort((a, b) => (order.get(a.user_id) ?? 99) - (order.get(b.user_id) ?? 99))
+        .map((p: { user_id: string; anon_name: string | null; avatar_path: string | null; profile_color_index: number | null }) => {
+          const imgUrl = getAvatarUrl(p.avatar_path)
+          const colorClass = getAvatarColorClass(p.profile_color_index ?? null, p.user_id)
+          return {
+            src: imgUrl || makeEmojiAvatarDataUrl(p.user_id, colorClass),
+            alt: p.anon_name?.trim() || '익명',
+          }
+        })
+      setTopActiveAvatars(avatarList)
+    }
+    load()
+  }, [])
+
   const [hasRegisteredBusiness, setHasRegisteredBusiness] = useState(false)
   useEffect(() => {
     supabase
@@ -1062,6 +1161,22 @@ function HomePageInner() {
         setNotification({ type: 'procon_vote', postId, anonName: p?.anon_name?.trim() || '익명', actorUserId: uid, actorAvatarUrl: actorUrl ?? undefined, actorAvatarColorClass: actorColor, proconSide: side, titleSnippet })
         setNotificationKey((k) => k + 1)
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comment_likes' }, async (payload) => {
+        const uid = (payload.new as { user_id?: string })?.user_id
+        const me = userIdRef.current
+        if (!uid || uid === me) return
+        try { if (localStorage.getItem('notifications') === 'false') return } catch {}
+        const commentId = (payload.new as { comment_id: string }).comment_id
+        const { data: commentRow } = await supabase.from('comments').select('post_id').eq('id', commentId).single()
+        const postId = (commentRow as { post_id?: string } | null)?.post_id
+        if (!postId) return
+        const { data: profile } = await supabase.from('profiles').select('anon_name, avatar_path, profile_color_index').eq('user_id', uid).single()
+        const p = profile as { anon_name?: string | null; avatar_path?: string | null; profile_color_index?: number | null } | null
+        const actorUrl = p ? getAvatarUrl(p.avatar_path ?? null) : null
+        const actorColor = p ? getAvatarColorClass(p.profile_color_index ?? null, uid) : undefined
+        setNotification({ type: 'comment_like', postId, anonName: p?.anon_name?.trim() || '익명', actorUserId: uid, actorAvatarUrl: actorUrl ?? undefined, actorAvatarColorClass: actorColor })
+        setNotificationKey((k) => k + 1)
+      })
         .subscribe((status, err) => {
           if (status === 'CHANNEL_ERROR' && err) {
             console.warn('[Realtime] subscription error:', err)
@@ -1134,7 +1249,9 @@ function HomePageInner() {
       const userIds = posts.map((p) => p.user_id)
       const uniqUserIds = [...new Set(userIds)]
       const postIdToUserId = new Map(posts.map((p) => [p.id, p.user_id]))
-      const [reactions, comments, media, profilesRes, postsByUserRes, commentsWithBody, commentsByUserRes, allPostsByUsersRes] = await Promise.all([
+
+      // ── Phase 1: 기본 데이터 병렬 fetch ──
+      const [reactions, comments, media, profilesRes, postsByUserRes, commentsWithBody, commentsByUserRes, allPostsByUsersRes, pollsRes, proconRes] = await Promise.all([
         supabase.from('post_reactions').select('post_id').in('post_id', postIds),
         supabase.from('comments').select('post_id').in('post_id', postIds),
         supabase.from('post_media').select('post_id, file_path, position').in('post_id', postIds).order('position'),
@@ -1143,11 +1260,25 @@ function HomePageInner() {
         supabase.from('comments').select('id, post_id, body').in('post_id', postIds),
         uniqUserIds.length > 0 ? supabase.from('comments').select('user_id').in('user_id', uniqUserIds) : Promise.resolve({ data: [] }),
         uniqUserIds.length > 0 ? supabase.from('posts').select('id, user_id').in('user_id', uniqUserIds).eq('status', 'visible') : Promise.resolve({ data: [] }),
+        supabase.from('post_polls').select('id, post_id, question, option_1, option_2, option_3, option_4, ends_at').in('post_id', postIds),
+        supabase.from('post_procon').select('post_id, pro_label, con_label').in('post_id', postIds),
       ])
+
+      // ── Phase 2: Phase 1 결과에 의존하는 fetch들을 병렬로 ──
       const commentIds = (commentsWithBody?.data ?? []).map((c: { id: string }) => c.id)
-      const { data: commentLikesData } = commentIds.length > 0
-        ? await supabase.from('comment_likes').select('comment_id').in('comment_id', commentIds)
-        : { data: [] as { comment_id: string }[] }
+      const allPostsByUsers = (allPostsByUsersRes.data ?? []) as { id: string; user_id: string }[]
+      const allPostIds = allPostsByUsers.map((r) => r.id)
+      const pollPostIds = (pollsRes.data ?? []).map((r: { post_id: string }) => r.post_id)
+      const proconPostIds = (proconRes.data ?? []).map((r: { post_id: string }) => r.post_id)
+
+      const [commentLikesRes, allReactionsRes, pollVotesRes, proconVotesRes] = await Promise.all([
+        commentIds.length > 0 ? supabase.from('comment_likes').select('comment_id').in('comment_id', commentIds) : Promise.resolve({ data: [] as { comment_id: string }[] }),
+        allPostIds.length > 0 ? supabase.from('post_reactions').select('post_id').in('post_id', allPostIds) : Promise.resolve({ data: [] as { post_id: string }[] }),
+        pollPostIds.length > 0 ? supabase.from('post_poll_votes').select('post_id, option_index, user_id').in('post_id', pollPostIds) : Promise.resolve({ data: [] as { post_id: string; option_index: number; user_id: string }[] }),
+        proconPostIds.length > 0 ? supabase.from('post_procon_votes').select('post_id, side, user_id').in('post_id', proconPostIds) : Promise.resolve({ data: [] as { post_id: string; side: string; user_id: string }[] }),
+      ])
+
+      // ── Phase 3: 동기적으로 모든 데이터 가공 (setState 없이) ──
       const anonByUser: Record<string, string> = {}
       const avatarByUser: Record<string, string> = {}
       const colorByUser: Record<string, string> = {}
@@ -1160,7 +1291,6 @@ function HomePageInner() {
         colorByUser[p.user_id] = getAvatarColorClass(p.profile_color_index ?? null, p.user_id)
         if (p.lunch_winner_at === todayLA) newLunchWinnerIds.add(p.user_id)
       })
-      setLunchWinnerUserIds((prev) => new Set([...prev, ...newLunchWinnerIds]))
       const postCountByUser: Record<string, number> = {}
       uniqUserIds.forEach((id) => { postCountByUser[id] = 0 })
       ;(postsByUserRes.data ?? []).forEach((r: { user_id: string }) => {
@@ -1176,25 +1306,16 @@ function HomePageInner() {
       reactions.data?.forEach((r) => (reactionCount[r.post_id] = (reactionCount[r.post_id] ?? 0) + 1))
       const reactionCountByUser: Record<string, number> = {}
       uniqUserIds.forEach((id) => { reactionCountByUser[id] = 0 })
-      const allPostsByUsers = (allPostsByUsersRes.data ?? []) as { id: string; user_id: string }[]
       const allPostIdToUserId = new Map(allPostsByUsers.map((r) => [r.id, r.user_id]))
-      if (allPostsByUsers.length > 0) {
-        const allPostIds = allPostsByUsers.map((r) => r.id)
-        const { data: allReactions } = await supabase.from('post_reactions').select('post_id').in('post_id', allPostIds)
-        ;(allReactions ?? []).forEach((r: { post_id: string }) => {
-          const uid = allPostIdToUserId.get(r.post_id)
-          if (uid) reactionCountByUser[uid] = (reactionCountByUser[uid] ?? 0) + 1
-        })
-      }
+      ;(allReactionsRes.data ?? []).forEach((r: { post_id: string }) => {
+        const uid = allPostIdToUserId.get(r.post_id)
+        if (uid) reactionCountByUser[uid] = (reactionCountByUser[uid] ?? 0) + 1
+      })
       const newTierByUser: Record<string, { name: string; badge_color: string | null } | null> = {}
       uniqUserIds.forEach((uid) => {
         const tier = resolveTier(tiers, postCountByUser[uid] ?? 0, commentCountByUser[uid] ?? 0, reactionCountByUser[uid] ?? 0)
         newTierByUser[uid] = tier ? { name: tier.name, badge_color: tier.badge_color ?? null } : null
       })
-      setTierByUser((prev) => ({ ...prev, ...newTierByUser }))
-      setAnonMap((prev) => ({ ...prev, ...anonByUser }))
-      setAvatarMap((prev) => ({ ...prev, ...avatarByUser }))
-      setAvatarColorMap((prev) => ({ ...prev, ...colorByUser }))
       const commentCount: Record<string, number> = {}
       postIds.forEach((id) => { commentCount[id] = 0 })
       comments.data?.forEach((r) => (commentCount[r.post_id] = (commentCount[r.post_id] ?? 0) + 1))
@@ -1210,7 +1331,7 @@ function HomePageInner() {
       })
       const likeCountByComment: Record<string, number> = {}
       commentIds.forEach((cid) => { likeCountByComment[cid] = 0 })
-      ;(commentLikesData ?? []).forEach((r: { comment_id: string }) => {
+      ;(commentLikesRes.data ?? []).forEach((r: { comment_id: string }) => {
         likeCountByComment[r.comment_id] = (likeCountByComment[r.comment_id] ?? 0) + 1
       })
       const bestByPost: Record<string, string> = {}
@@ -1227,19 +1348,12 @@ function HomePageInner() {
         const firstLine = raw.slice(0, 50) + (raw.length > 50 ? '…' : '')
         if (firstLine) bestByPost[pid] = firstLine
       })
-      setBestCommentByPost((prev) => ({ ...prev, ...bestByPost }))
-      setReactionCounts((prev) => ({ ...prev, ...reactionCount }))
-      setCommentCounts((prev) => ({ ...prev, ...commentCount }))
-      setPostMedia((prev) => ({ ...prev, ...mediaByPost }))
 
-      const { data: pollsRows } = await supabase.from('post_polls').select('id, post_id, question, option_1, option_2, option_3, option_4, ends_at').in('post_id', postIds)
-      const pollPostIds = (pollsRows ?? []).map((r: { post_id: string }) => r.post_id)
+      const currentUserId = user?.id ?? null
+      const newPollByPostId: Record<string, { poll: PollData; counts: number[]; userVoteIndex: number | null }> = {}
       if (pollPostIds.length > 0) {
-        const { data: pollVotes } = await supabase.from('post_poll_votes').select('post_id, option_index, user_id').in('post_id', pollPostIds)
-        const votesList = (pollVotes ?? []) as { post_id: string; option_index: number; user_id: string }[]
-        const currentUserId = user?.id ?? null
-        const newPollByPostId: Record<string, { poll: PollData; counts: number[]; userVoteIndex: number | null }> = {}
-        for (const row of pollsRows ?? []) {
+        const votesList = (pollVotesRes.data ?? []) as { post_id: string; option_index: number; user_id: string }[]
+        for (const row of pollsRes.data ?? []) {
           const p = row as { id: string; post_id: string; question: string; option_1: string; option_2: string; option_3: string | null; option_4: string | null; ends_at: string | null }
           const votes = votesList.filter((v) => v.post_id === p.post_id)
           const counts = [0, 0, 0, 0]
@@ -1251,17 +1365,12 @@ function HomePageInner() {
           }
           newPollByPostId[p.post_id] = { poll: p as PollData, counts, userVoteIndex }
         }
-        setPollByPostId((prev) => ({ ...prev, ...newPollByPostId }))
       }
 
-      const { data: proconRows } = await supabase.from('post_procon').select('post_id, pro_label, con_label').in('post_id', postIds)
-      const proconPostIds = (proconRows ?? []).map((r: { post_id: string }) => r.post_id)
+      const newProconByPostId: Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel: string; conLabel: string }> = {}
       if (proconPostIds.length > 0) {
-        const { data: proconVotes } = await supabase.from('post_procon_votes').select('post_id, side, user_id').in('post_id', proconPostIds)
-        const votesList = (proconVotes ?? []) as { post_id: string; side: string; user_id: string }[]
-        const currentUserId = user?.id ?? null
-        const newProconByPostId: Record<string, { proCount: number; conCount: number; userVote: 'pro' | 'con' | null; proLabel: string; conLabel: string }> = {}
-        for (const row of proconRows ?? []) {
+        const votesList = (proconVotesRes.data ?? []) as { post_id: string; side: string; user_id: string }[]
+        for (const row of proconRes.data ?? []) {
           const r = row as { post_id: string; pro_label?: string | null; con_label?: string | null }
           const postId = r.post_id
           const votes = votesList.filter((v) => v.post_id === postId)
@@ -1280,17 +1389,50 @@ function HomePageInner() {
             conLabel: r.con_label?.trim() || '반',
           }
         }
-        setProconByPostId((prev) => ({ ...prev, ...newProconByPostId }))
       }
+
+      // ── Phase 4: 모든 setState를 한 번에 (React 18 automatic batching) ──
+      setLunchWinnerUserIds((prev) => new Set([...prev, ...newLunchWinnerIds]))
+      setTierByUser((prev) => ({ ...prev, ...newTierByUser }))
+      setAnonMap((prev) => ({ ...prev, ...anonByUser }))
+      setAvatarMap((prev) => ({ ...prev, ...avatarByUser }))
+      setAvatarColorMap((prev) => ({ ...prev, ...colorByUser }))
+      setBestCommentByPost((prev) => ({ ...prev, ...bestByPost }))
+      setReactionCounts((prev) => ({ ...prev, ...reactionCount }))
+      setCommentCounts((prev) => ({ ...prev, ...commentCount }))
+      setPostMedia((prev) => ({ ...prev, ...mediaByPost }))
+      setPollByPostId((prev) => ({ ...prev, ...newPollByPostId }))
+      setProconByPostId((prev) => ({ ...prev, ...newProconByPostId }))
     },
     [siteSettings, tiers, user?.id]
   )
 
   useEffect(() => {
-    const flat = CATEGORY_COLUMN_IDS.flatMap((catId) => categoryColumnPosts[catId] ?? [])
-    if (flat.length === 0) return
-    fetchCountsAndThumbnails(flat)
-  }, [categoryColumnPosts, fetchCountsAndThumbnails])
+    let cancelled = false
+    const fetchCategoryColumns = async () => {
+      const results = await Promise.all(
+        CATEGORY_COLUMN_IDS.map(async (catId) => {
+          const { data } = await supabase
+            .from('posts')
+            .select('id, user_id, title, body, is_spicy, created_at, category')
+            .eq('category', catId)
+            .eq('status', 'visible')
+            .order('created_at', { ascending: false })
+            .limit(5)
+          return { catId, posts: (data ?? []) as Post[] }
+        })
+      )
+      if (cancelled) return
+      const next: Record<string, Post[]> = {}
+      const flat: Post[] = []
+      results.forEach(({ catId, posts }) => { next[catId] = posts; flat.push(...posts) })
+      if (flat.length > 0) await fetchCountsAndThumbnails(flat)
+      if (cancelled) return
+      setCategoryColumnPosts(next)
+    }
+    fetchCategoryColumns()
+    return () => { cancelled = true }
+  }, [fetchCountsAndThumbnails])
 
   useEffect(() => {
     if (siteSettings == null || tiers.length === 0) return
@@ -1310,16 +1452,15 @@ function HomePageInner() {
       const data = await fetchBatch(0, selectedFilter, spicyOnly)
       if (cancelled) return
       const blockedSet = new Set(blocked)
-      setBlockedIds(blockedSet)
       const filtered = blockedSet.size > 0 ? data.filter((p) => !blockedSet.has(p.user_id)) : data
       if (isFilterChange && typeof window !== 'undefined') savedScrollRef.current = window.scrollY
+      await fetchCountsAndThumbnails(filtered)
+      if (cancelled) return
+      setBlockedIds(blockedSet)
       setPosts(filtered)
       setHasMore(filtered.length === PAGE_SIZE)
-      await fetchCountsAndThumbnails(filtered)
-      if (!cancelled) {
-        setInitialLoading(false)
-        hasLoadedOnceRef.current = true
-      }
+      setInitialLoading(false)
+      hasLoadedOnceRef.current = true
     }
     run()
     return () => { cancelled = true }
@@ -1351,9 +1492,8 @@ function HomePageInner() {
   }, [searchParams])
 
   useEffect(() => {
-    if (siteSettings == null || tiers.length === 0) return
-    const minC = siteSettings.trending_min_count ?? DEFAULT_TRENDING_MIN
-    const maxC = Math.max(siteSettings.trending_max ?? DEFAULT_TRENDING_MAX, 10) // 최소 10개 보장
+    const minC = siteSettings?.trending_min_count ?? DEFAULT_TRENDING_MIN
+    const maxC = Math.max(siteSettings?.trending_max ?? DEFAULT_TRENDING_MAX, 10)
     // 여유분으로 가져온 뒤 렌더 시 스포트라이트 ID는 별도 state로 제외 (의존성 제거로 피드와 동시 로딩)
     const adjustedMaxC = Math.max(15, maxC + 5)
     supabase.rpc('get_trending_post_ids', { p_min_count: minC, p_max_count: adjustedMaxC }).then(async ({ data: ids, error }) => {
@@ -1374,18 +1514,16 @@ function HomePageInner() {
         }
       }
       const orderIds = idList.map((r) => r.post_id)
-      supabase
+      const { data: rows } = await supabase
         .from('posts')
         .select('id, user_id, title, body, is_spicy, created_at, category')
         .in('id', orderIds)
-        .then(({ data: rows }) => {
-          const byId = new Map((rows ?? []).map((p) => [p.id, p]))
-          const ordered = orderIds.map((id) => byId.get(id)).filter(Boolean) as Post[]
-          setTrendingPostsData(ordered)
-          if (ordered.length > 0) fetchCountsAndThumbnails(ordered)
-        })
+      const byId = new Map((rows ?? []).map((p) => [p.id, p]))
+      const ordered = orderIds.map((id) => byId.get(id)).filter(Boolean) as Post[]
+      if (ordered.length > 0) await fetchCountsAndThumbnails(ordered)
+      setTrendingPostsData(ordered)
     })
-  }, [siteSettings, tiers.length, fetchCountsAndThumbnails])
+  }, [siteSettings?.trending_min_count, siteSettings?.trending_max, fetchCountsAndThumbnails])
 
   useEffect(() => {
     let cancelled = false
@@ -1541,8 +1679,16 @@ function HomePageInner() {
   const lunchWinCountByUserId: Record<string, number> = Object.fromEntries(lunchHallOfFame.map((e) => [e.user_id, e.win_count]))
 
   return (
-    <main className="min-h-screen max-w-[600px] mx-auto bg-background">
-      <header className="sticky top-0 z-10 flex items-center justify-between px-4 h-14 bg-background/95 backdrop-blur-md shadow-sm">
+    <main className="min-h-screen max-w-[600px] mx-auto bg-background pt-14">
+      <header
+        className="fixed top-0 left-0 right-0 z-10 max-w-[600px] mx-auto flex items-center justify-between px-4 h-14 bg-background/95 backdrop-blur-md shadow-sm"
+        style={{
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          opacity: topNavVisible ? 1 : 0,
+          transform: topNavVisible ? 'translateY(0)' : 'translateY(-100%)',
+          pointerEvents: topNavVisible ? 'auto' : 'none',
+        }}
+      >
         <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-lg font-bold tracking-tight text-foreground shrink-0">아니스비</h1>
           <select
@@ -1585,9 +1731,47 @@ function HomePageInner() {
       </div>
 
       <section className="rounded-t-xl px-4 py-6 space-y-3 bg-background">
-        <p className="text-lg font-semibold text-foreground leading-snug">
-          20·30의 노빠꾸 커뮤니티 🥵
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
+            20·30 👫 익명 커뮤니티
+          </span>
+          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
+            영포티 사절🙅‍♀️
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+            </span>
+            {fakeLiveCount}명 접속중
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+            </span>
+            {fakeTypingCount}명 폭주중...⌨️
+          </span>
+          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+            새 글 {todayPostCount}개
+          </span>
+          {lunchParticipantCount !== null && (
+            <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+              점메추 {lunchParticipantCount}명 참여
+            </span>
+          )}
+          {topActiveAvatars.length > 0 && (
+            <AnimatedAvatarGroup
+              avatars={topActiveAvatars}
+              maxVisible={6}
+              size={30}
+              overlap={0.3}
+              extraCount={totalMemberCount}
+              showLabel
+              className="ml-auto"
+            />
+          )}
+        </div>
         <button
           type="button"
           onClick={() => document.getElementById('feed-filters')?.scrollIntoView({ behavior: 'smooth' })}
@@ -1619,37 +1803,9 @@ function HomePageInner() {
             )}
           </div>
         </button>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
-            <span className="relative flex size-2.5">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
-            </span>
-            지금 {fakeLiveCount}명 접속중
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
-            오늘 새 글 {todayPostCount}개
-          </span>
-          {lunchParticipantCount !== null && (
-            <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
-              점메추 {lunchParticipantCount}명 참여
-            </span>
-          )}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
-            <span className="relative flex size-2.5">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
-            </span>
-            {fakeTypingCount}명 폭주중...⌨️
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
-            {todayPhrase}
-          </span>
-        </div>
       </section>
 
-      {siteSettings != null && (
-        <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
+      <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
           <h2 className="text-base font-semibold text-foreground mb-3">LA 20·30이 많이 본 글</h2>
           {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) ? (
           <>
@@ -1798,7 +1954,6 @@ function HomePageInner() {
             <TrendingSectionSkeleton />
           )}
         </section>
-      )}
 
       <div className="px-4 py-2">
         <BannerAd slotKey="home-between-trending-lunch" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-trending-lunch') : 3} />
@@ -2071,6 +2226,11 @@ function HomePageInner() {
                 <span className="font-medium text-foreground">{notification.anonName}</span>님이 {notification.titleSnippet ? <><span className="text-foreground/90">{notification.titleSnippet}</span>에 </> : ''}{notification.proconSide === 'pro' ? '찬성' : '반대'}를 택했어요
               </p>
             )}
+            {notification.type === 'comment_like' && (
+              <p className="text-sm text-muted-foreground truncate">
+                <span className="font-medium text-foreground">{notification.anonName}</span>님이 댓글에 하트를 눌렀어요
+              </p>
+            )}
           </Link>
           <button
             type="button"
@@ -2097,7 +2257,16 @@ function HomePageInner() {
         </div>
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-20 max-w-[600px] mx-auto bg-background/95 backdrop-blur safe-area-pb shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.25)]" aria-label="Bottom menu">
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-20 max-w-[600px] mx-auto bg-background/95 backdrop-blur safe-area-pb shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_-2px_12px_-2px_rgba(0,0,0,0.25)]"
+        style={{
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          opacity: bottomNavVisible ? 1 : 0,
+          transform: bottomNavVisible ? 'translateY(0)' : 'translateY(100%)',
+          pointerEvents: bottomNavVisible ? 'auto' : 'none',
+        }}
+        aria-label="Bottom menu"
+      >
         <div className="flex items-center justify-around h-14 px-2">
           <Link href="/" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground" aria-label="Home">
             <Home className="size-5" />
@@ -2110,10 +2279,23 @@ function HomePageInner() {
           <button
             type="button"
             onClick={() => setWriteOpen(true)}
-            className="flex flex-col items-center justify-center -mt-4 size-14 rounded-full bg-[var(--spicy)] text-white shadow-lg hover:opacity-90 transition-opacity"
+            className="flex flex-col items-center justify-center -mt-4 size-14 rounded-full shadow-lg hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--spicy)] focus-visible:ring-offset-2 focus-visible:ring-offset-background relative"
             aria-label="Write post"
           >
-            <Plus className="size-7 stroke-[2.5]" />
+            <SiriOrb
+              size="56px"
+              className="shrink-0"
+              colors={{
+                bg: "oklch(98% 0.01 264.695)",
+                c1: "oklch(70% 0.2 120)", // Green
+                c2: "oklch(75% 0.18 60)", // Yellow
+                c3: "oklch(80% 0.15 300)", // Purple
+              }}
+              animationDuration={15}
+            />
+            <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <Plus className="size-7 stroke-[2.5] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]" aria-hidden />
+            </span>
           </button>
           <Link href="/notifications" className="flex flex-col items-center gap-0.5 py-2 text-muted-foreground hover:text-foreground relative" aria-label="Notifications">
             <Bell className="size-5" />
