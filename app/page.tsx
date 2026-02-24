@@ -1864,13 +1864,14 @@ function HomePageInner() {
                     <button
                       type="button"
                       onClick={() => setTrendingRowsExpanded(!trendingRowsExpanded)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-full border border-border bg-background hover:bg-muted"
+                      className="text-sm inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+                      aria-label={trendingRowsExpanded ? '접기' : '더보기'}
                     >
-                      {trendingRowsExpanded ? '접기' : '더보기'}
+                      더보기
                       {trendingRowsExpanded ? (
-                        <ChevronUp className="size-4" aria-hidden />
+                        <ChevronUp className="size-6" aria-hidden />
                       ) : (
-                        <ChevronDown className="size-4" aria-hidden />
+                        <ChevronDown className="size-6" aria-hidden />
                       )}
                     </button>
                   </div>

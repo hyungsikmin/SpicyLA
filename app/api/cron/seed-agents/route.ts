@@ -2,7 +2,7 @@
  * GET/POST /api/cron/seed-agents
  * 시드 에이전트 20명 랜덤 선택 후 각각 투표/리액션 수행.
  * + 오늘 점메추 추천 아이템당 리액션(투표) 1개씩 시드가 넣음.
- * Vercel Cron은 GET으로 호출함 → GET도 처리해야 10분마다 동작.
+ * 로컬에서만 사용 (개발 서버 띄운 뒤 curl 등으로 호출).
  * 인증: Authorization: Bearer <CRON_SECRET> 또는 ?secret=<CRON_SECRET>
  */
 import { NextResponse } from 'next/server'
@@ -21,8 +21,6 @@ function isAuthorized(request: Request): boolean {
   const { searchParams } = new URL(request.url)
   const secretParam = searchParams.get('secret')?.trim() ?? ''
   if (secretParam && secretParam === CRON_SECRET) return true
-  // Vercel Cron이 GET으로 호출할 때 Authorization을 안 붙이는 경우가 있음 → User-Agent로 허용
-  if (request.method === 'GET' && request.headers.get('user-agent') === 'vercel-cron/1.0') return true
   return false
 }
 
@@ -110,7 +108,6 @@ async function runCron() {
   })
 }
 
-/** Vercel Cron이 10분마다 GET으로 호출함 */
 export async function GET(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

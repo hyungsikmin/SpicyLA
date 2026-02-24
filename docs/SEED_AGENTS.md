@@ -6,7 +6,7 @@
 
 - `OPENAI_API_KEY` — OpenAI API 키 (gpt-4o-mini 사용)
 - `SEED_ACCOUNT_PASSWORD` — 시드 계정 공통 비밀번호 (기존과 동일)
-- `CRON_SECRET` — cron 호출 시 인증용 (아무 난수 문자열)
+- `CRON_SECRET` — API 호출 시 인증용 (아무 난수 문자열)
 
 ## DB 마이그레이션
 
@@ -22,33 +22,21 @@ npx supabase db push
 1. 관리자 → 시드 계정 페이지
 2. **「페르소나 할당」** 버튼 클릭 → 페르소나가 비어 있는 시드에 LA 20-30대 템플릿이 할당됩니다.
 
-## Cron으로 에이전트 실행
+## 에이전트 실행 (로컬 CLI 전용)
 
 매 실행 시 **20명**의 시드를 랜덤 선택해, 각각 **투표** 또는 **리액션**을 수행합니다.
 
-**수동 호출 (테스트):**
+**로컬에서만** 개발 서버(`npm run dev`)를 띄운 뒤, 터미널에서 호출하세요.
 
 ```bash
-curl -s "https://spicy-la.vercel.app/api/cron/seed-agents?secret=YOUR_CRON_SECRET"
+# 쿼리 파라미터
+curl -s "http://localhost:3000/api/cron/seed-agents?secret=YOUR_CRON_SECRET"
+
+# 또는 Authorization 헤더
+curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" "http://localhost:3000/api/cron/seed-agents"
 ```
 
-또는 Authorization 헤더:
-
-```bash
-curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" "https://spicy-la.vercel.app/api/cron/seed-agents"
-```
-
-**10분마다 자동 실행 — [cron-job.org](https://cron-job.org) 사용:**
-
-1. [cron-job.org](https://cron-job.org) 가입 후 로그인
-2. **Create cronjob** → **Title**: `spicy-la seed agents` (아무 이름)
-3. **Address (URL):**  
-   `https://spicy-la.vercel.app/api/cron/seed-agents?secret=여기에_Vercel에_설정한_CRON_SECRET_값`
-4. **Schedule:** Every 10 minutes (또는 `*/10 * * * *`)
-5. **Request method:** GET
-6. 저장 후 활성화
-
-Vercel에는 크론 설정 없음. 배포만 하면 되고, 실제 호출은 cron-job.org가 10분마다 GET으로 보냄.
+주기 실행이 필요하면 로컬에서 cron(맥/리눅스) 또는 스케줄러로 위 URL을 호출하면 됩니다. 배포(Vercel)에서는 크론을 사용하지 않습니다.
 
 ## 동작 요약
 

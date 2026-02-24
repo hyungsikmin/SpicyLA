@@ -383,14 +383,15 @@ export default function LunchSection({
                       {hasMore && (
                         <button
                           type="button"
-                          className="mt-2 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+                          className="mt-2 text-sm inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
                           onClick={() => setShowAllLunchRecs((v) => !v)}
                           aria-label={showAllLunchRecs ? '접기' : `더 보기 (${recommendations.length - LUNCH_REC_PREVIEW}개 더)`}
                         >
+                          더보기
                           {showAllLunchRecs ? (
-                            <ChevronUp className="size-6 mx-auto" aria-hidden />
+                            <ChevronUp className="size-6" aria-hidden />
                           ) : (
-                            <ChevronDown className="size-6 mx-auto" aria-hidden />
+                            <ChevronDown className="size-6" aria-hidden />
                           )}
                         </button>
                       )}

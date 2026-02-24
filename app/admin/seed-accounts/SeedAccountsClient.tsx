@@ -193,7 +193,7 @@ export default function SeedAccountsClient({
         <CardHeader>
           <CardTitle>AI 에이전트 (시드 글/댓글)</CardTitle>
           <CardDescription>
-            페르소나 할당 후 cron으로 POST /api/cron/seed-agents (Authorization: Bearer CRON_SECRET) 호출하면 시드들이 자동으로 글·댓글을 남겨요. OPENAI_API_KEY 필요.
+            페르소나 할당 후 로컬에서 개발 서버 띄우고 curl 등으로 POST /api/cron/seed-agents (Authorization: Bearer CRON_SECRET) 호출하면 시드들이 자동으로 글·댓글을 남겨요. OPENAI_API_KEY 필요. (배포 환경에서는 크론 미사용)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
