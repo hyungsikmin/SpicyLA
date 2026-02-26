@@ -40,6 +40,19 @@ type Post = {
   category?: string | null
 }
 
+function useLazyVisible(rootMargin = '200px') {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(([e]) => { if (e?.isIntersecting) { setVisible(true); obs.disconnect() } }, { rootMargin })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [rootMargin])
+  return { ref, visible }
+}
+
 const PAGE_SIZE = 5
 const DEFAULT_TRENDING_MIN = 10
 const DEFAULT_TRENDING_MAX = 10
@@ -637,6 +650,9 @@ function SpotlightProconCard({
 function HomePageInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  const lazyCat = useLazyVisible('400px')
+  const lazyLunch = useLazyVisible('400px')
+  const lazyBiz = useLazyVisible('400px')
   const [user, setUser] = useState<User | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
@@ -759,9 +775,9 @@ function HomePageInner() {
   }, [])
 
   useEffect(() => {
-    if (!deferredLoaded) return
+    if (!lazyLunch.visible) return
     getTodayLunchParticipantCount().then(setLunchParticipantCount)
-  }, [deferredLoaded])
+  }, [lazyLunch.visible])
 
   useEffect(() => {
     Promise.all([fetchSiteSettings(), fetchTiers()]).then(([s, t]) => {
@@ -847,7 +863,7 @@ function HomePageInner() {
 
   const [hasRegisteredBusiness, setHasRegisteredBusiness] = useState(false)
   useEffect(() => {
-    if (!deferredLoaded) return
+    if (!lazyBiz.visible) return
     supabase
       .from('business_spotlight')
       .select('id, business_name, one_liner, link_url, instagram_url, media_path, media_type')
@@ -857,7 +873,7 @@ function HomePageInner() {
       .order('created_at', { ascending: false })
       .limit(6)
       .then(({ data }) => setBusinessSpotlight((data ?? []) as Array<{ id: string; business_name: string; one_liner: string | null; link_url: string | null; instagram_url: string | null; media_path: string | null; media_type: string | null }>))
-  }, [deferredLoaded])
+  }, [lazyBiz.visible])
   useEffect(() => {
     if (!user?.id) {
       setHasRegisteredBusiness(false)
@@ -1206,7 +1222,7 @@ function HomePageInner() {
   )
 
   useEffect(() => {
-    if (!deferredLoaded) return
+    if (!lazyCat.visible) return
     let cancelled = false
     const fetchCategoryColumns = async () => {
       const results = await Promise.all(
@@ -1231,9 +1247,10 @@ function HomePageInner() {
     }
     fetchCategoryColumns()
     return () => { cancelled = true }
-  }, [deferredLoaded, fetchCountsAndThumbnails])
+  }, [lazyCat.visible, fetchCountsAndThumbnails])
 
   useEffect(() => {
+    if (!deferredLoaded) return
     const isFilterChange = hasLoadedOnceRef.current
     if (!isFilterChange) {
       setPosts([])
@@ -1262,7 +1279,7 @@ function HomePageInner() {
     }
     run()
     return () => { cancelled = true }
-  }, [selectedFilter, spicyOnly, fetchBatch, fetchCountsAndThumbnails, user?.id])
+  }, [deferredLoaded, selectedFilter, spicyOnly, fetchBatch, fetchCountsAndThumbnails, user?.id])
 
   useEffect(() => {
     if (savedScrollRef.current == null) return
@@ -1272,9 +1289,9 @@ function HomePageInner() {
   }, [posts, selectedFilter])
 
   useEffect(() => {
-    if (!deferredLoaded) return
+    if (!lazyLunch.visible) return
     getLunchHallOfFame(10).then(setLunchHallOfFame)
-  }, [deferredLoaded])
+  }, [lazyLunch.visible])
 
   // Handle lunch_date query parameter - scroll to lunch section if present
   useEffect(() => {
@@ -1291,7 +1308,6 @@ function HomePageInner() {
   }, [searchParams])
 
   useEffect(() => {
-    if (!deferredLoaded) return
     const minC = siteSettings?.trending_min_count ?? DEFAULT_TRENDING_MIN
     const maxC = Math.max(siteSettings?.trending_max ?? DEFAULT_TRENDING_MAX, 10)
     // 여유분으로 가져온 뒤 렌더 시 스포트라이트 ID는 별도 state로 제외 (의존성 제거로 피드와 동시 로딩)
@@ -1323,10 +1339,9 @@ function HomePageInner() {
       if (ordered.length > 0) await fetchCountsAndThumbnails(ordered)
       setTrendingPostsData(ordered)
     })
-  }, [deferredLoaded, siteSettings?.trending_min_count, siteSettings?.trending_max, fetchCountsAndThumbnails])
+  }, [siteSettings?.trending_min_count, siteSettings?.trending_max, fetchCountsAndThumbnails])
 
   useEffect(() => {
-    if (!deferredLoaded) return
     let cancelled = false
     const run = async () => {
       const [pollRes, proconRes] = await Promise.all([
@@ -1391,7 +1406,7 @@ function HomePageInner() {
     }
     run()
     return () => { cancelled = true }
-  }, [deferredLoaded, user?.id, fetchCountsAndThumbnails])
+  }, [user?.id, fetchCountsAndThumbnails])
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return
@@ -1677,6 +1692,7 @@ function HomePageInner() {
               )}
             </div>
           )}
+          <div ref={lazyCat.ref} aria-hidden />
           {hasAnyCategoryPosts && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-3">
               {postsByCategory.map(({ catId, posts: list }) => {
@@ -1744,7 +1760,7 @@ function HomePageInner() {
         <BannerAd slotKey="home-between-trending-lunch" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-trending-lunch') : 3} />
       </div>
 
-      <section id="lunch" className="min-h-[280px]" aria-label="점메추">
+      <section ref={lazyLunch.ref} id="lunch" className="min-h-[280px]" aria-label="점메추">
         <LunchSection user={user} hallOfFame={lunchHallOfFame} feedAvatarMap={avatarMap} />
       </section>
 
@@ -1752,7 +1768,7 @@ function HomePageInner() {
         <BannerAd slotKey="home-between-lunch-feed" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-between-lunch-feed') : 3} />
       </div>
 
-      <section className={`rounded-t-xl -mt-3 px-4 py-6 ${BUSINESS_GRADIENT}`}>
+      <section ref={lazyBiz.ref} className={`rounded-t-xl -mt-3 px-4 py-6 ${BUSINESS_GRADIENT}`}>
         <div className="flex items-start gap-2 mb-3">
           <span className="shrink-0 size-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 dark:text-red-400" aria-hidden>
             <Sparkles className="size-4" />
