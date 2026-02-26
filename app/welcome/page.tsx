@@ -1,7 +1,7 @@
 'use client'
 
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,7 @@ const ONBOARDING_SLIDES: BlurCarouselSlide[] = [
   },
 ]
 
-export default function WelcomePage() {
+function WelcomePageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const from = searchParams.get('from') || '/'
@@ -154,5 +154,19 @@ export default function WelcomePage() {
         />
       )}
     </main>
+  )
+}
+
+export default function WelcomePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen flex items-center justify-center p-4">
+          <p className="text-muted-foreground text-sm">로딩 중…</p>
+        </main>
+      }
+    >
+      <WelcomePageContent />
+    </Suspense>
   )
 }
