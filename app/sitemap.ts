@@ -24,7 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const admin = getSupabaseAdmin()
     const { data: posts, error } = await admin
       .from('posts')
-      .select('id, updated_at')
+      .select('id, created_at')
       .eq('status', 'visible')
       .order('created_at', { ascending: false })
       .limit(2000)
@@ -32,9 +32,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       console.error('[sitemap] Supabase query error:', error.message, error.code, error.details)
     } else if (posts?.length) {
       postUrls.push(
-        ...posts.map((p: { id: string; updated_at?: string }) => ({
+        ...posts.map((p: { id: string; created_at?: string }) => ({
           url: `${root}/p/${p.id}`,
-          lastModified: p.updated_at ? new Date(p.updated_at) : new Date(),
+          lastModified: p.created_at ? new Date(p.created_at) : new Date(),
           changeFrequency: 'weekly' as const,
           priority: 0.8,
         }))
