@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import type { User } from '@supabase/supabase-js'
 import { getAvatarUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 import { userAvatarEmoji } from '@/lib/postAvatar'
@@ -27,12 +28,20 @@ function postFakeViews(postId: string, comments: number, reactions: number) {
 export default function UserPostsPage() {
   const params = useParams()
   const userId = params.userId as string
+  const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
 
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+    supabase.auth.getUser().then(({ data: { user: u } }) => setUser(u ?? null))
+    return () => subscription.unsubscribe()
+  }, [])
   useEffect(() => {
     if (!userId) return
     const load = async () => {
@@ -111,9 +120,9 @@ export default function UserPostsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     {post.title && <span className="font-semibold text-[15px]">{post.title}</span>}
-                    {post.is_spicy && (
+                    {post.is_spicy && user && (
                       <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/40">
-                        멤버만 공개🥵
+                        🔒멤버공개
                       </span>
                     )}
                   </div>

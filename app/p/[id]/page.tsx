@@ -388,16 +388,16 @@ export default async function PostPage({
                 <h1 className="font-semibold text-[17px] leading-tight">
                   {post.title}
                 </h1>
-                {post.is_spicy && (
+                {post.is_spicy && user && (
                   <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/40">
-                    멤버만 공개🥵
+                    🔒멤버공개
                   </span>
                 )}
               </div>
             )}
-            {!post.title && post.is_spicy && (
+            {!post.title && post.is_spicy && user && (
               <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/40 mt-1 inline-block">
-                멤버만 공개🥵
+                🔒멤버공개
               </span>
             )}
             <p className="text-[15px] leading-snug text-foreground/95 mt-2 whitespace-pre-line">

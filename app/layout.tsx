@@ -40,7 +40,10 @@ export default function RootLayout({
     <html lang="ko" suppressHydrationWarning>
       <head>
         {supabaseOrigin ? (
-          <link rel="preconnect" href={supabaseOrigin} />
+          <>
+            <link rel="dns-prefetch" href={supabaseOrigin} />
+            <link rel="preconnect" href={supabaseOrigin} />
+          </>
         ) : null}
         <script
           dangerouslySetInnerHTML={{
