@@ -8,7 +8,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
-import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { MessageCircle, Eye, Sun, Moon, Plus, Flame, Bell, User as UserIcon, Home, Sparkles, ExternalLink, ChevronRight, ChevronDown, ChevronUp, Heart } from 'lucide-react'
 import { getPostImageUrl, getAvatarUrl, getBusinessSpotlightMediaUrl } from '@/lib/storage'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 import { userAvatarEmoji } from '@/lib/postAvatar'
@@ -23,6 +23,8 @@ import BannerAd from '@/components/BannerAd'
 import { getSwitchSeedAccountLink } from '@/app/actions/switchSeedAccount'
 import SiriOrb from '@/components/smoothui/siri-orb'
 import AnimatedAvatarGroup, { type AvatarData } from '@/components/ui/smoothui/animated-avatar-group'
+import { ShineBorder } from '@/components/ui/shine-border'
+import { SparklesText } from '@/components/ui/sparkles-text'
 
 type Post = {
   id: string
@@ -308,6 +310,12 @@ function PostCard({
             )}
             {proconData && (
               <div className="mt-2" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+                <p className="text-xs font-medium text-foreground mb-1 line-clamp-2">
+                  {(() => {
+                    const q = (post.title ?? '').trim() || (post.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 50) || '이 글에 대한 의견'
+                    return q + (q.length >= 50 ? '…' : '')
+                  })()}
+                </p>
                 <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact proLabel={proconData.proLabel} conLabel={proconData.conLabel} />
               </div>
             )}
@@ -337,7 +345,7 @@ function PostCard({
             )}
             <div className="flex items-center gap-4 mt-3 text-muted-foreground text-sm font-medium tabular-nums">
               <span className="flex items-center gap-1.5"><MessageCircle className="size-4 shrink-0" aria-hidden />{commentCount}</span>
-              <span className="flex items-center gap-1.5 font-bold text-red-500 dark:text-red-400"><span aria-hidden>🌶️</span>{reactionCount}</span>
+              <span className="flex items-center gap-1.5 font-bold text-red-500 dark:text-red-400"><Heart className="size-4 shrink-0" aria-hidden />{reactionCount}</span>
               <span className="flex items-center gap-1.5"><Eye className="size-4 shrink-0" aria-hidden />{fakeViews}</span>
             </div>
           </div>
@@ -409,6 +417,12 @@ function PostGridCard({
         )}
         {!compactTrending && proconData && (
           <div className="p-2 shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation() }} role="presentation">
+            <p className="text-xs font-medium text-foreground mb-1 line-clamp-2">
+              {(() => {
+                const q = (post.title ?? '').trim() || (post.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 50) || '이 글에 대한 의견'
+                return q + (q.length >= 50 ? '…' : '')
+              })()}
+            </p>
             <ProconBar postId={post.id} proCount={proconData.proCount} conCount={proconData.conCount} userVote={proconData.userVote} currentUserId={user?.id ?? null} compact proLabel={proconData.proLabel} conLabel={proconData.conLabel} />
           </div>
         )}
@@ -463,7 +477,10 @@ function PostGridCard({
               </div>
               <div className={`flex items-center gap-2 text-muted-foreground tabular-nums shrink-0 ${compactTrending ? 'text-[8px]' : 'text-xs'}`}>
                 <span className="flex items-center gap-0.5"><MessageCircle className={compactTrending ? 'size-2.5' : 'size-3.5'} aria-hidden />{commentCount}</span>
-                <span className={`flex items-center gap-0.5 text-red-500 dark:text-red-400 font-medium ${compactTrending ? 'text-[8px]' : ''}`}>🌶️ {reactionCount}</span>
+                <span className={`flex items-center gap-0.5 text-red-500 dark:text-red-400 font-medium ${compactTrending ? 'text-[8px]' : ''}`}>
+                  <Heart className={compactTrending ? 'size-2.5 shrink-0' : 'size-3.5 shrink-0'} aria-hidden />
+                  {reactionCount}
+                </span>
               </div>
             </div>
           </div>
@@ -634,8 +651,8 @@ function HomePageInner() {
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
-  const [fakeLiveCount, setFakeLiveCount] = useState(23)
-  const [fakeTypingCount, setFakeTypingCount] = useState(0)
+  const [liveCount, setLiveCount] = useState(155)
+  const [typingCount, setTypingCount] = useState(48)
   const [lunchParticipantCount, setLunchParticipantCount] = useState<number | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
   const [notification, setNotification] = useState<{ type: 'comment' | 'reaction' | 'post' | 'poll_vote' | 'procon_vote' | 'comment_like'; postId: string; anonName: string; actorUserId?: string; commentSnippet?: string; reactionEmoji?: string; titleSnippet?: string; actorAvatarUrl?: string; actorAvatarColorClass?: string; proconSide?: 'pro' | 'con' } | null>(null)
@@ -955,8 +972,8 @@ function HomePageInner() {
     setDark(next)
   }
   useEffect(() => {
-    setFakeLiveCount((Date.now() % 19) + 12)
-    setFakeTypingCount(Math.floor(Math.random() * 35) + 3)
+    setLiveCount(Math.floor(Math.random() * (237 - 73 + 1)) + 73)
+    setTypingCount(Math.floor(Math.random() * (73 - 23 + 1)) + 23)
   }, [])
 
   useEffect(() => {
@@ -1690,7 +1707,11 @@ function HomePageInner() {
         }}
       >
         <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-lg font-bold tracking-tight text-foreground shrink-0">아니스비</h1>
+          <h1 className="shrink-0">
+            <Link href="/" className="block relative h-[42px] w-[90px]">
+              <Image src="/ani-ssap.png" alt="아니스비" fill className="object-contain object-left" sizes="90px" />
+            </Link>
+          </h1>
           <select
             value={region}
             onChange={(e) => setRegion(e.target.value)}
@@ -1726,31 +1747,40 @@ function HomePageInner() {
         </div>
       </header>
 
+      {/* main content column */}
+      <div className="min-w-0 pt-14">
+
       <div className="px-4 py-2">
         <BannerAd slotKey="home-below-header" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-below-header') : 3} />
       </div>
 
       <section className="rounded-t-xl px-4 py-6 space-y-3 bg-background">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
-            20·30 👫 익명 커뮤니티
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
-            영포티 사절🙅‍♀️
-          </span>
+          <div className="relative inline-flex rounded-full p-[1px]">
+            <ShineBorder borderWidth={1} duration={8} shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]} className="rounded-full opacity-50" />
+            <span className="relative z-10 inline-flex items-center rounded-full bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
+              20·30 👫 익명 커뮤니티
+            </span>
+          </div>
+          <div className="relative inline-flex rounded-full p-[1px]">
+            <ShineBorder borderWidth={1} duration={8} shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]} className="rounded-full opacity-50" />
+            <span className="relative z-10 inline-flex items-center rounded-full bg-card px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm">
+              영포티 사절🙅‍♀️
+            </span>
+          </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
             <span className="relative flex size-2.5">
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
             </span>
-            {fakeLiveCount}명 접속중
+            {liveCount}명 접속중
           </span>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
             <span className="relative flex size-2.5">
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
               <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
             </span>
-            {fakeTypingCount}명 폭주중...⌨️
+            {typingCount}명 폭주중...⌨️
           </span>
           <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
             새 글 {todayPostCount}개
@@ -1806,7 +1836,9 @@ function HomePageInner() {
       </section>
 
       <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
-          <h2 className="text-base font-semibold text-foreground mb-3">LA 20·30이 많이 본 글</h2>
+          <h2 className="text-base font-semibold text-foreground mb-3">
+            <SparklesText className="text-base font-semibold text-foreground">LA 20·30이 많이 본 글</SparklesText>
+          </h2>
           {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) ? (
           <>
           {trendingPostsDisplay.length > 0 && (() => {
@@ -1974,8 +2006,8 @@ function HomePageInner() {
             <Sparkles className="size-4" />
           </span>
           <div>
-            <h2 className="text-sm font-semibold text-foreground leading-tight">
-              LA 20·30 자영업·스타트업 응원해요
+            <h2 className="text-base font-semibold text-foreground mb-3">
+              <SparklesText className="text-base font-semibold text-foreground">LA 20·30 자영업·스타트업 응원해요</SparklesText>
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
               청춘들의 비즈니스를 소개하고 함께 응원해요.
@@ -2056,7 +2088,9 @@ function HomePageInner() {
       {false && popularMembers.length > 0 && (
         <section className="rounded-t-xl -mt-3 px-4 py-6" aria-hidden>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-foreground">인기 멤버</h2>
+            <h2 className="text-base font-semibold text-foreground">
+              <SparklesText className="text-base font-semibold text-foreground">인기 멤버</SparklesText>
+            </h2>
             <span className="text-xs text-muted-foreground">이번 주 기준</span>
           </div>
           <div className="flex gap-4 overflow-x-auto pb-1 scroll-smooth snap-x snap-mandatory shrink-0">
@@ -2087,7 +2121,9 @@ function HomePageInner() {
 
       <section id="latest-posts" className="rounded-t-xl -mt-3 pt-2 pb-4 bg-background min-h-[360px]" aria-label="최신 글">
         <div className="px-4 flex flex-wrap items-center gap-2 mb-3">
-          <h2 className="text-sm font-semibold text-foreground shrink-0">방금 올라온 글</h2>
+          <h2 className="text-base font-semibold text-foreground shrink-0 mb-0">
+            <SparklesText className="text-base font-semibold text-foreground">방금 올라온 글</SparklesText>
+          </h2>
           <div id="feed-filters" className="flex flex-wrap items-center gap-1.5">
             {FILTER_ORDER.map((id) => {
               const f = FILTERS.find((x) => x.id === id)
@@ -2176,6 +2212,8 @@ function HomePageInner() {
         )}
       </div>
 
+      </div>
+
       <div className="fixed bottom-14 left-0 right-0 max-w-[600px] mx-auto z-10 px-4 pointer-events-none [&_a]:pointer-events-auto">
         <BannerAd slotKey="home-bottom-sticky" rotationIntervalSeconds={siteSettings ? getBannerRotationSeconds(siteSettings, 'home-bottom-sticky') : 3} />
       </div>
@@ -2248,7 +2286,9 @@ function HomePageInner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setWriteOpen(false)}>
           <div className="bg-background border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="p-4 border-b border-border flex items-center justify-between">
-              <h2 className="text-lg font-semibold">글쓰기</h2>
+              <h2 className="text-base font-semibold text-foreground mb-0">
+                <SparklesText className="text-base font-semibold text-foreground">글쓰기</SparklesText>
+              </h2>
               <Button variant="ghost" size="sm" onClick={() => setWriteOpen(false)}>닫기</Button>
             </div>
             <div className="p-4">

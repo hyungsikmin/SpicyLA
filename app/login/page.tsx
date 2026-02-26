@@ -28,10 +28,10 @@ function LoginContent() {
 
   const ensureProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) return null
     const { data: profile } = await supabase
       .from('profiles')
-      .select('user_id')
+      .select('user_id, terms_accepted_at, onboarding_completed_at')
       .eq('user_id', user.id)
       .maybeSingle()
     if (!profile) {
@@ -39,6 +39,12 @@ function LoginContent() {
         user_id: user.id,
         anon_name: generateAnonName(),
       })
+      return { terms_accepted_at: null, onboarding_completed_at: null }
+    }
+    const p = profile as { terms_accepted_at?: string | null; onboarding_completed_at?: string | null }
+    return {
+      terms_accepted_at: p.terms_accepted_at ?? null,
+      onboarding_completed_at: p.onboarding_completed_at ?? null,
     }
   }
 
@@ -66,7 +72,7 @@ function LoginContent() {
 
   useEffect(() => {
     if (!user) return
-    ensureProfile().then(async () => {
+    ensureProfile().then(async (welcomeFlags) => {
       const { data } = await supabase.auth.getSession()
       const uid = data.session?.user?.id
       let isAdmin = false
@@ -74,7 +80,19 @@ function LoginContent() {
         const { data: adminRow } = await supabase.from('admin_users').select('user_id').eq('user_id', uid).maybeSingle()
         isAdmin = !!adminRow
       }
-      const redirectTo = isAdmin ? '/admin' : (from.startsWith('/') ? from : '/')
+      if (isAdmin) {
+        window.location.href = '/admin'
+        return
+      }
+      if (welcomeFlags && welcomeFlags.terms_accepted_at == null) {
+        window.location.href = '/welcome?from=' + encodeURIComponent(from.startsWith('/') ? from : '/')
+        return
+      }
+      if (welcomeFlags && welcomeFlags.onboarding_completed_at == null) {
+        window.location.href = '/welcome?step=onboarding&from=' + encodeURIComponent(from.startsWith('/') ? from : '/')
+        return
+      }
+      const redirectTo = from.startsWith('/') ? from : '/'
       window.location.href = redirectTo
     })
   }, [user, from])

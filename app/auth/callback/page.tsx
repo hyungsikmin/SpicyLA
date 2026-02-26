@@ -4,6 +4,11 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 
+function generateAnonName() {
+  const num = Math.floor(1000 + Math.random() * 9000)
+  return `익명${num}`
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter()
   const [status, setStatus] = useState<'loading' | 'done' | 'error'>('loading')
@@ -59,6 +64,36 @@ export default function AuthCallbackPage() {
         if (!mounted) return
         if (!finalSession) {
           setStatus('error')
+          return
+        }
+
+        const uid = finalSession.user.id
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('user_id, terms_accepted_at, onboarding_completed_at')
+          .eq('user_id', uid)
+          .maybeSingle()
+        if (!mounted) return
+        if (!profile) {
+          await supabase.from('profiles').insert({
+            user_id: uid,
+            anon_name: generateAnonName(),
+          })
+          setStatus('done')
+          window.location.href = '/welcome?from=/'
+          return
+        }
+        const p = profile as { terms_accepted_at?: string | null; onboarding_completed_at?: string | null }
+        const termsAccepted = p.terms_accepted_at ?? null
+        const onboardingCompleted = p.onboarding_completed_at ?? null
+        if (termsAccepted == null) {
+          setStatus('done')
+          window.location.href = '/welcome?from=/'
+          return
+        }
+        if (onboardingCompleted == null) {
+          setStatus('done')
+          window.location.href = '/welcome?step=onboarding&from=/'
           return
         }
         setStatus('done')

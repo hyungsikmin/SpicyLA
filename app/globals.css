@@ -173,6 +173,16 @@
   }
 }
 
+/* Shine border animation (Magic UI) */
+@keyframes shine {
+  0% { background-position: 0% 0%; }
+  50% { background-position: 100% 100%; }
+  100% { background-position: 0% 0%; }
+}
+.animate-shine {
+  animation: shine var(--duration) infinite linear;
+}
+
 /* Override Next.js dev portal position: clear left/top (was 0px) */
 nextjs-portal {
   left: unset;

@@ -25,6 +25,7 @@ import {
   type HallOfFameEntry,
 } from '@/lib/lunch'
 import { ChevronDown, ChevronUp, Crown, ExternalLink } from 'lucide-react'
+import { SparklesText } from '@/components/ui/sparkles-text'
 import { userAvatarEmoji } from '@/lib/postAvatar'
 import { getAvatarColorClass } from '@/lib/avatarColors'
 
@@ -307,8 +308,10 @@ export default function LunchSection({
               🍱
             </span>
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-foreground leading-tight">
-                {!roundReady ? '오늘의 점메추' : isClosed ? '오늘의 점메추 결과' : '오늘의 점메추'}
+              <h2 className="text-base font-semibold text-foreground leading-tight">
+                <SparklesText className="text-base font-semibold text-foreground">
+                  {!roundReady ? '오늘의 점메추' : isClosed ? '오늘의 점메추 결과' : '오늘의 점메추'}
+                </SparklesText>
               </h2>
             {showCountdown && (
               <span
@@ -718,7 +721,9 @@ function LunchModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
       <div className="bg-background border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
-          <h2 className="text-lg font-semibold">오늘의 점메추</h2>
+          <h2 className="text-base font-semibold text-foreground mb-0">
+            <SparklesText className="text-base font-semibold text-foreground">오늘의 점메추</SparklesText>
+          </h2>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="닫기">닫기</Button>
         </div>
         <div className="p-4 space-y-4">
@@ -788,7 +793,9 @@ function LunchModal({
           )}
 
           <div>
-            <h3 className="text-sm font-semibold text-foreground mb-2">추천 목록</h3>
+            <h3 className="text-base font-semibold text-foreground mb-3">
+              <SparklesText className="text-base font-semibold text-foreground">추천 목록</SparklesText>
+            </h3>
             {recommendations.length === 0 ? (
               <p className="text-sm text-muted-foreground">아직 추천이 없어요.</p>
             ) : (
