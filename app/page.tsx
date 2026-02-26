@@ -1603,6 +1603,7 @@ function HomePageInner() {
       </section>
 
       <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
+          <div ref={lazyCat.ref} aria-hidden />
           <h2 className="text-base font-semibold text-foreground mb-3">
             <span className="text-base font-semibold text-foreground">LA 20·30이 많이 본 글</span>
           </h2>
@@ -1692,7 +1693,6 @@ function HomePageInner() {
               )}
             </div>
           )}
-          <div ref={lazyCat.ref} aria-hidden />
           {hasAnyCategoryPosts && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-3">
               {postsByCategory.map(({ catId, posts: list }) => {
