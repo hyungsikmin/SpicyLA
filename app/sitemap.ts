@@ -8,6 +8,9 @@ const baseUrl =
 /** 재검증 주기(초). 배포 플랫폼에서 sitemap 캐시/재생성에 사용할 수 있음 */
 export const revalidate = 3600
 
+/** 빌드 시 정적 생성하지 않고 요청 시마다 실행해 DB에서 게시글 URL 가져옴 */
+export const dynamic = 'force-dynamic'
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const root = baseUrl?.replace(/\/$/, '') ?? 'https://example.com'
 
