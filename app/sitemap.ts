@@ -19,13 +19,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const postUrls: MetadataRoute.Sitemap = []
   try {
     const admin = getSupabaseAdmin()
-    const { data: posts } = await admin
+    const { data: posts, error } = await admin
       .from('posts')
       .select('id, updated_at')
       .eq('status', 'visible')
       .order('created_at', { ascending: false })
       .limit(2000)
-    if (posts?.length) {
+    if (error) {
+      console.error('[sitemap] Supabase query error:', error.message, error.code, error.details)
+    } else if (posts?.length) {
       postUrls.push(
         ...posts.map((p: { id: string; updated_at?: string }) => ({
           url: `${root}/p/${p.id}`,
@@ -34,9 +36,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           priority: 0.8,
         }))
       )
+      console.log('[sitemap] Added post URLs:', postUrls.length)
+    } else {
+      console.log('[sitemap] No visible posts returned, count:', posts?.length ?? 0)
     }
-  } catch {
-    // SUPABASE_SERVICE_ROLE_KEY 미설정 등으로 실패 시 게시글 URL 없이 진행
+  } catch (e) {
+    console.error('[sitemap] catch:', e instanceof Error ? e.message : String(e), e instanceof Error ? e.stack : '')
   }
 
   return [...staticRoutes, ...postUrls]
