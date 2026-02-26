@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { supabase } from '@/lib/supabaseClient'
 import type { BannerSlotKey } from '@/lib/bannerSlots'
 
@@ -69,20 +70,24 @@ export default function BannerAd({
           href={ad.link_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="block w-full"
+          className="block w-full max-w-[600px] mx-auto relative h-[120px]"
         >
-          <img
+          <Image
             src={ad.image_url}
             alt={ad.alt_text ?? '광고'}
-            className="w-full max-w-[600px] mx-auto h-auto object-cover max-h-[120px]"
+            fill
+            className="object-cover"
+            sizes="(max-width: 600px) 100vw, 600px"
           />
         </a>
       ) : (
-        <Link href={ad.link_url} className="block w-full">
-          <img
+        <Link href={ad.link_url} className="block w-full max-w-[600px] mx-auto relative h-[120px]">
+          <Image
             src={ad.image_url}
             alt={ad.alt_text ?? '광고'}
-            className="w-full max-w-[600px] mx-auto h-auto object-cover max-h-[120px]"
+            fill
+            className="object-cover"
+            sizes="(max-width: 600px) 100vw, 600px"
           />
         </Link>
       )}

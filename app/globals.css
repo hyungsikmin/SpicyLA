@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -188,3 +187,53 @@ nextjs-portal {
   left: unset;
   top: unset;
 }
+
+/* Minimal enter/exit animations (replaces tw-animate-css for used classes only) */
+@keyframes enter-in {
+  from {
+    opacity: var(--tw-enter-opacity, 0);
+    transform: translate(var(--tw-enter-translate-x), var(--tw-enter-translate-y)) scale(var(--tw-enter-scale, 1));
+  }
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate(0, 0) scale(1);
+  }
+}
+@keyframes exit-out {
+  from {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    opacity: var(--tw-enter-opacity, 0);
+    transform: translate(var(--tw-exit-translate-x), var(--tw-exit-translate-y)) scale(var(--tw-exit-scale, 1));
+  }
+}
+.animate-in {
+  --tw-enter-opacity: 0;
+  --tw-enter-scale: 1;
+  --tw-enter-translate-x: 0;
+  --tw-enter-translate-y: 0;
+  animation-name: enter-in;
+  animation-duration: var(--tw-enter-duration, 150ms);
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+.animate-out {
+  --tw-exit-opacity: 1;
+  --tw-exit-scale: 1;
+  --tw-exit-translate-x: 0;
+  --tw-exit-translate-y: 0;
+  animation-name: exit-out;
+  animation-duration: var(--tw-exit-duration, 150ms);
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+.fade-in { --tw-enter-opacity: 0; }
+.fade-in-0 { --tw-enter-opacity: 0; }
+.fade-out-0 { --tw-exit-opacity: 0; }
+.slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+.zoom-in-95 { --tw-enter-scale: 0.95; }
+.zoom-out-95 { --tw-exit-scale: 0.95; }
+.duration-200 { --tw-enter-duration: 200ms; --tw-exit-duration: 200ms; }
+.duration-300 { --tw-enter-duration: 300ms; --tw-exit-duration: 300ms; }

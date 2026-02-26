@@ -2,6 +2,7 @@
 
 import type { User } from '@supabase/supabase-js'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import type { ReactNode } from 'react'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -15,16 +16,23 @@ import { userAvatarEmoji } from '@/lib/postAvatar'
 import { fetchSiteSettings, fetchTiers, resolveTier, getBannerRotationSeconds, type SiteSettings, type Tier } from '@/lib/siteSettings'
 import { getLunchHallOfFame, getTodayLunchParticipantCount, type HallOfFameEntry } from '@/lib/lunch'
 import RelativeTime from '@/components/RelativeTime'
-import WriteForm from '@/components/WriteForm'
-import LunchSection from '@/components/LunchSection'
 import PollBlock, { type PollData } from '@/components/PollBlock'
 import ProconBar from '@/components/ProconBar'
 import BannerAd from '@/components/BannerAd'
 import { getSwitchSeedAccountLink } from '@/app/actions/switchSeedAccount'
-import SiriOrb from '@/components/smoothui/siri-orb'
-import AnimatedAvatarGroup, { type AvatarData } from '@/components/ui/smoothui/animated-avatar-group'
 import { ShineBorder } from '@/components/ui/shine-border'
 import { SparklesText } from '@/components/ui/sparkles-text'
+import type { AvatarData } from '@/components/ui/smoothui/animated-avatar-group'
+
+const WriteForm = dynamic(() => import('@/components/WriteForm'), { ssr: false })
+const LunchSection = dynamic(() => import('@/components/LunchSection'), {
+  loading: () => <section className="min-h-[120px]" aria-hidden />,
+})
+const SiriOrb = dynamic(() => import('@/components/smoothui/siri-orb'), { ssr: false })
+const AnimatedAvatarGroup = dynamic(
+  () => import('@/components/ui/smoothui/animated-avatar-group').then((m) => ({ default: m.default })),
+  { ssr: false }
+)
 
 type Post = {
   id: string
@@ -1706,10 +1714,10 @@ function HomePageInner() {
           pointerEvents: topNavVisible ? 'auto' : 'none',
         }}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="shrink-0">
-            <Link href="/" className="block relative h-[42px] w-[90px]">
-              <Image src="/ani-ssap.png" alt="아니스비" fill className="object-contain object-left" sizes="90px" />
+        <div className="flex items-center gap-0 min-w-0">
+          <h1 className="shrink-0 -mr-0.5">
+            <Link href="/" className="block relative h-[42px] w-[60px]">
+              <Image src="/ani-ssap.png" alt="아니스비" fill className="object-contain object-left" sizes="60px" priority />
             </Link>
           </h1>
           <select
@@ -1738,11 +1746,12 @@ function HomePageInner() {
               로그아웃
             </Button>
           ) : (
-            <Link href="/login">
-              <Button size="sm" className="rounded-full bg-[var(--cta)] text-[var(--cta-foreground)] hover:opacity-90 text-sm font-medium">
-                로그인
+            <div className="relative inline-flex rounded-full p-[1px]">
+              <ShineBorder borderWidth={1.5} duration={8} shineColor={["#A07CFE", "#FE8FB5", "#FFBE7B"]} className="rounded-full opacity-50" />
+              <Button asChild size="sm" className="relative z-10 rounded-full border-0 bg-white text-foreground hover:bg-[#f6d1ce] text-sm font-medium transition-colors">
+                <Link href="/login">로그인</Link>
               </Button>
-            </Link>
+            </div>
           )}
         </div>
       </header>
