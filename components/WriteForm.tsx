@@ -241,6 +241,14 @@ export default function WriteForm({
     }
 
     const postId = post.id
+    // IndexNow: 새 글 URL 제출 (fire-and-forget)
+    const postUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/p/${postId}`
+    fetch('/api/indexnow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urlList: [postUrl] }),
+    }).catch(() => {})
+
     if (images.length > 0) {
       for (let i = 0; i < images.length; i++) {
         const { file } = images[i]
