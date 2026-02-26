@@ -650,7 +650,6 @@ function SpotlightProconCard({
 function HomePageInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const lazyCat = useLazyVisible('400px')
   const lazyLunch = useLazyVisible('400px')
   const lazyBiz = useLazyVisible('400px')
   const [user, setUser] = useState<User | null>(null)
@@ -1222,7 +1221,6 @@ function HomePageInner() {
   )
 
   useEffect(() => {
-    if (!lazyCat.visible) return
     let cancelled = false
     const fetchCategoryColumns = async () => {
       const results = await Promise.all(
@@ -1247,7 +1245,7 @@ function HomePageInner() {
     }
     fetchCategoryColumns()
     return () => { cancelled = true }
-  }, [lazyCat.visible, fetchCountsAndThumbnails])
+  }, [fetchCountsAndThumbnails])
 
   useEffect(() => {
     if (!deferredLoaded) return
@@ -1603,7 +1601,6 @@ function HomePageInner() {
       </section>
 
       <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
-          <div ref={lazyCat.ref} aria-hidden />
           <h2 className="text-base font-semibold text-foreground mb-3">
             <span className="text-base font-semibold text-foreground">LA 20·30이 많이 본 글</span>
           </h2>
