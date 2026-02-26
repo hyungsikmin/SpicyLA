@@ -1221,6 +1221,7 @@ function HomePageInner() {
   )
 
   useEffect(() => {
+    if (!deferredLoaded) return
     let cancelled = false
     const fetchCategoryColumns = async () => {
       const results = await Promise.all(
@@ -1245,7 +1246,7 @@ function HomePageInner() {
     }
     fetchCategoryColumns()
     return () => { cancelled = true }
-  }, [fetchCountsAndThumbnails])
+  }, [deferredLoaded, fetchCountsAndThumbnails])
 
   useEffect(() => {
     if (!deferredLoaded) return
