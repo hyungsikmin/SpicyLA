@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 import VisitorPing from '@/components/VisitorPing'
+import { Analytics } from '@vercel/analytics/next'
 
 const baseUrl =
   process.env.NEXT_PUBLIC_SITE_URL ||
@@ -56,6 +57,7 @@ export default function RootLayout({
       >
         <VisitorPing />
         {children}
+        <Analytics />
       </body>
     </html>
   );
