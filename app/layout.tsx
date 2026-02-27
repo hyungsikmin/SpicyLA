@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,6 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 import VisitorPing from '@/components/VisitorPing'
+import { Analytics } from '@vercel/analytics/next'
 
 const baseUrl =
   process.env.NEXT_PUBLIC_SITE_URL ||
@@ -45,6 +47,18 @@ export default function RootLayout({
             <link rel="preconnect" href={supabaseOrigin} />
           </>
         ) : null}
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-J9RWW7BBQD"
+          strategy="afterInteractive"
+        />
+        <Script id="gtag-init" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-J9RWW7BBQD');
+          `}
+        </Script>
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){var t=localStorage.getItem('theme');document.documentElement.classList.toggle('dark',t==='dark');})();`,
@@ -56,6 +70,7 @@ export default function RootLayout({
       >
         <VisitorPing />
         {children}
+        <Analytics />
       </body>
     </html>
   );

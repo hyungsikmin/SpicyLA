@@ -18,6 +18,7 @@ import { getLunchHallOfFame, getTodayLunchParticipantCount, type HallOfFameEntry
 import RelativeTime from '@/components/RelativeTime'
 import { getSwitchSeedAccountLink } from '@/app/actions/switchSeedAccount'
 import { ShineBorder } from '@/components/ui/shine-border'
+import { SparklesText } from '@/components/ui/sparkles-text'
 import type { PollData } from '@/components/PollBlock'
 
 const PollBlock = dynamic(() => import('@/components/PollBlock'), { ssr: false })
@@ -715,6 +716,7 @@ function HomePageInner() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const hasLoadedOnceRef = useRef(false)
   const savedScrollRef = useRef<number | null>(null)
+  const feedDepsRef = useRef({ deferredLoaded: false, selectedFilter: '', spicyOnly: false, userId: null as string | null })
   const [topNavVisible, setTopNavVisible] = useState(true)
   const [bottomNavVisible, setBottomNavVisible] = useState(true)
 
@@ -1250,6 +1252,27 @@ function HomePageInner() {
 
   useEffect(() => {
     if (!deferredLoaded) return
+    const prev = feedDepsRef.current
+    const onlyUserChanged =
+      hasLoadedOnceRef.current &&
+      prev.deferredLoaded === deferredLoaded &&
+      prev.selectedFilter === selectedFilter &&
+      prev.spicyOnly === spicyOnly &&
+      prev.userId !== (user?.id ?? null)
+
+    if (onlyUserChanged) {
+      const runBlockedOnly = async () => {
+        const blocked =
+          user?.id != null
+            ? await supabase.from('blocked_users').select('blocked_id').eq('blocker_id', user.id).then((r) => (r.data ?? []).map((x: { blocked_id: string }) => x.blocked_id))
+            : []
+        setBlockedIds(new Set(blocked))
+      }
+      runBlockedOnly()
+      feedDepsRef.current = { deferredLoaded, selectedFilter, spicyOnly, userId: user?.id ?? null }
+      return
+    }
+
     const isFilterChange = hasLoadedOnceRef.current
     if (!isFilterChange) {
       setPosts([])
@@ -1275,6 +1298,7 @@ function HomePageInner() {
       setHasMore(filtered.length === PAGE_SIZE)
       setInitialLoading(false)
       hasLoadedOnceRef.current = true
+      feedDepsRef.current = { deferredLoaded, selectedFilter, spicyOnly, userId: user?.id ?? null }
     }
     run()
     return () => { cancelled = true }
@@ -1421,7 +1445,7 @@ function HomePageInner() {
 
   useEffect(() => {
     const el = sentinelRef.current
-    if (!el || !hasMore || loadingMore) return
+    if (!el || !hasMore || loadingMore || initialLoading) return
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore()
@@ -1430,7 +1454,7 @@ function HomePageInner() {
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMore, loadingMore, loadMore])
+  }, [hasMore, loadingMore, loadMore, initialLoading])
 
   const handleWriteSuccess = useCallback(() => {
     setWriteOpen(false)
@@ -1468,15 +1492,16 @@ function HomePageInner() {
   
 
   
-  // 방금 올라온 글에는 피드 글 전부 표시 (트렌딩에만 있는 새 글도 포함). 카테고리 선택 시 해당 카테고리 트렌딩만 병합.
+  // 방금 올라온 글: filteredPosts에 없는 최신 트렌딩 글만 merge (오래된 트렌딩 글은 제외해 갭 방지)
   const latestPosts = useMemo(() => {
+    if (filteredPosts.length === 0) return filteredPosts
+    const oldestTs = new Date(filteredPosts[filteredPosts.length - 1].created_at).getTime()
     const map = new Map(filteredPosts.map((p) => [p.id, p]))
-    const toMerge = selectedFilter === 'all'
+    const toMerge = (selectedFilter === 'all'
       ? trendingPostsData
       : trendingPostsData.filter((p) => p.category === selectedFilter)
-    toMerge.forEach((p) => {
-      if (!map.has(p.id)) map.set(p.id, p)
-    })
+    ).filter((p) => new Date(p.created_at).getTime() >= oldestTs)
+    toMerge.forEach((p) => { if (!map.has(p.id)) map.set(p.id, p) })
     return Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [filteredPosts, trendingPostsData, selectedFilter])
 
@@ -1593,7 +1618,7 @@ function HomePageInner() {
         <button
           type="button"
           onClick={() => document.getElementById('feed-filters')?.scrollIntoView({ behavior: 'smooth' })}
-          className="w-full rounded-xl border border-border bg-muted/40 px-4 py-3 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors relative overflow-hidden"
+          className="hidden w-full rounded-xl border border-border bg-muted/40 px-4 py-3 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors relative overflow-hidden"
         >
           <div className="relative h-5">
               <span>어떤 이야기가 궁금하세요?</span>
@@ -1603,7 +1628,7 @@ function HomePageInner() {
 
       <section id="trending" className={`rounded-t-xl -mt-3 pt-6 pb-6 px-4 min-h-[320px] ${TRENDING_GRADIENT}`} aria-label="인기 글">
           <h2 className="text-base font-semibold text-foreground mb-3">
-            <span className="text-base font-semibold text-foreground">LA 20·30이 많이 본 글</span>
+            <SparklesText className="text-base font-semibold text-foreground">LA 20·30이 많이 본 글</SparklesText>
           </h2>
           {(trendingPostsDisplay.length > 0 || hasAnyCategoryPosts || bestPollSpotlight || bestProconSpotlight) ? (
           <>
@@ -1679,6 +1704,9 @@ function HomePageInner() {
           })()}
           {(bestPollSpotlight || bestProconSpotlight) && (
             <div className="flex flex-col gap-2 mb-5" aria-label="투표·찬반">
+              <h2 className="text-base font-semibold text-foreground mb-3">
+                <SparklesText className="text-base font-semibold text-foreground">반박시 내 말이 맞음</SparklesText>
+              </h2>
               {bestPollSpotlight && (
                 <div className="min-w-0">
                   <SpotlightPollCard spotlight={bestPollSpotlight} user={user} />
@@ -1773,7 +1801,7 @@ function HomePageInner() {
           </span>
           <div>
             <h2 className="text-base font-semibold text-foreground mb-3">
-              <span className="text-base font-semibold text-foreground">LA 20·30 자영업·스타트업 응원해요</span>
+              <SparklesText className="text-base font-semibold text-foreground">LA 20·30 자영업·스타트업 응원해요</SparklesText>
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
               청춘들의 비즈니스를 소개하고 함께 응원해요.
@@ -1855,7 +1883,7 @@ function HomePageInner() {
         <section className="rounded-t-xl -mt-3 px-4 py-6" aria-hidden>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-base font-semibold text-foreground">
-              <span className="text-base font-semibold text-foreground">인기 멤버</span>
+              <SparklesText className="text-base font-semibold text-foreground">인기 멤버</SparklesText>
             </h2>
             <span className="text-xs text-muted-foreground">이번 주 기준</span>
           </div>
@@ -2053,7 +2081,7 @@ function HomePageInner() {
           <div className="bg-background border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="p-4 border-b border-border flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground mb-0">
-                <span className="text-base font-semibold text-foreground">글쓰기</span>
+                <SparklesText className="text-base font-semibold text-foreground">글쓰기</SparklesText>
               </h2>
               <Button variant="ghost" size="sm" onClick={() => setWriteOpen(false)}>닫기</Button>
             </div>

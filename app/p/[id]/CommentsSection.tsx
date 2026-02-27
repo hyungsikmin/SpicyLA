@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Fragment } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { Heart, Plus, Reply } from 'lucide-react'
 import CommentBox from './CommentBox'
@@ -62,10 +62,8 @@ export default function CommentsSection({
   bestCommentMinLikes?: number
   adminUserIds?: string[]
 }) {
-  const minLikes = bestCommentMinLikes ?? 1
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
-  const [visibleRootCount, setVisibleRootCount] = useState(COMMENTS_PAGE_SIZE)
-  const [visibleRepliesByRoot, setVisibleRepliesByRoot] = useState<Record<string, number>>({})
+  const [visibleCount, setVisibleCount] = useState(COMMENTS_PAGE_SIZE)
   const [localLikeCountByComment, setLocalLikeCountByComment] = useState<Record<string, number>>(() => ({ ...likeCountByComment }))
   const [localLikedCommentIds, setLocalLikedCommentIds] = useState<Set<string>>(() => new Set(likedCommentIds ?? []))
   const [likeTogglingId, setLikeTogglingId] = useState<string | null>(null)
@@ -115,23 +113,22 @@ export default function CommentsSection({
     if (!byParent.has(pid)) byParent.set(pid, [])
     byParent.get(pid)!.push(c)
   })
-  const rootList = byParent.get('root') ?? []
-  const chronological = sortByCreated(rootList)
-  const bestRoot =
-    rootList.length === 0
+  /** 전체 댓글+답글을 시간순 한 줄로 (같은 쓰레드 안에서도 시간순) */
+  const chronologicalList = sortByCreated(comments)
+  const bestComment =
+    chronologicalList.length === 0
       ? null
-      : rootList.reduce<Comment | null>((best, r) => {
-          if (!best) return r
-          const likes = localLikeCountByComment[r.id] ?? 0
+      : chronologicalList.reduce<Comment | null>((best, c) => {
+          if (!best) return c
+          const likes = localLikeCountByComment[c.id] ?? 0
           const bestLikes = localLikeCountByComment[best.id] ?? 0
-          if (likes > bestLikes) return r
+          if (likes > bestLikes) return c
           if (likes < bestLikes) return best
-          return new Date(r.created_at).getTime() < new Date(best.created_at).getTime() ? r : best
+          return new Date(c.created_at).getTime() < new Date(best.created_at).getTime() ? c : best
         }, null)
-  const roots =
-    bestRoot && chronological.length > 1
-      ? [bestRoot, ...chronological.filter((r) => r.id !== bestRoot.id)]
-      : chronological
+  const minLikesForBest = bestCommentMinLikes ?? 1
+  const showBestBadge = (node: Comment) =>
+    bestComment?.id === node.id && (localLikeCountByComment[node.id] ?? 0) >= minLikesForBest
   const participants = Array.from(
     new Set(comments.map((c) => anonMap[c.user_id]).filter(Boolean))
   ).sort()
@@ -140,11 +137,8 @@ export default function CommentsSection({
     participants.unshift(postAuthorAnon)
   }
 
-  /** 루트 아래 모든 답글을 1레벨만 들여쓰기로 평면 목록 (트리 중첩 없음) */
-  function getRepliesFlattened(parentId: string): Comment[] {
-    const direct = sortByCreated(byParent.get(parentId) ?? [])
-    return direct.flatMap((c) => [c, ...getRepliesFlattened(c.id)])
-  }
+  const visibleList = chronologicalList.slice(0, visibleCount)
+  const hasMore = chronologicalList.length > visibleCount
 
   const renderComment = (node: Comment, isRoot: boolean, isBest: boolean, isLastInGroup: boolean) => {
     const anon = anonMap[node.user_id] ?? '익명'
@@ -283,55 +277,29 @@ export default function CommentsSection({
 
   return (
     <div>
-      {roots.length === 0 && !hasUser && (
+      {chronologicalList.length === 0 && !hasUser && (
         <p className="text-sm text-muted-foreground py-4">아직 댓글이 없어.</p>
       )}
-      {roots.length === 0 && hasUser && (
+      {chronologicalList.length === 0 && hasUser && (
         <p className="text-sm text-muted-foreground py-2">첫 댓글을 남겨보세요.</p>
       )}
-      {roots.slice(0, visibleRootCount).map((root, index) => {
-        const replies = getRepliesFlattened(root.id)
-        const visibleReplyCount = visibleRepliesByRoot[root.id] ?? COMMENTS_PAGE_SIZE
-        const visibleReplies = replies.slice(0, visibleReplyCount)
-        const hasMoreReplies = replies.length > visibleReplyCount
-        return (
-          <Fragment key={root.id}>
-            {renderComment(root, true, index === 0 && (localLikeCountByComment[root.id] ?? 0) >= minLikes, replies.length === 0)}
-            {visibleReplies.map((reply, i) =>
-              renderComment(reply, false, false, i === visibleReplies.length - 1 && !hasMoreReplies)
-            )}
-            {hasMoreReplies && (
-              <div className="ml-10 flex items-start gap-0 border-b border-border py-2 bg-gradient-to-b from-muted/20 to-muted/70">
-                <div className="w-0.5 h-6 bg-border shrink-0 mt-1 rounded-full" aria-hidden />
-                <div className="pl-3 flex-1 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setVisibleRepliesByRoot((prev) => ({
-                        ...prev,
-                        [root.id]: (prev[root.id] ?? COMMENTS_PAGE_SIZE) + COMMENTS_PAGE_SIZE,
-                      }))
-                    }
-                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground font-medium"
-                  >
-                    <Plus className="size-4 shrink-0" aria-hidden />
-                    <span>답글 ({replies.length - visibleReplyCount}개 남음)</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </Fragment>
+      {visibleList.map((node, i) =>
+        renderComment(
+          node,
+          !node.parent_id,
+          showBestBadge(node),
+          i === visibleList.length - 1 && !hasMore
         )
-      })}
-      {roots.length > visibleRootCount && (
+      )}
+      {hasMore && (
         <div className="py-3 flex justify-center bg-gradient-to-b from-muted/20 to-muted/70">
           <button
             type="button"
-            onClick={() => setVisibleRootCount((prev) => prev + COMMENTS_PAGE_SIZE)}
+            onClick={() => setVisibleCount((prev) => prev + COMMENTS_PAGE_SIZE)}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground font-medium"
           >
             <Plus className="size-4 shrink-0" aria-hidden />
-            <span>{roots.length - visibleRootCount}개 남음</span>
+            <span>{chronologicalList.length - visibleCount}개 남음</span>
           </button>
         </div>
       )}
